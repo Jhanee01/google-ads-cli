@@ -1,0 +1,27 @@
+{
+  "name": "google-ads-cli",
+  "version": "1.0.0",
+  "description": "Agent-friendly Google Ads CLI: JSON reports, and write commands that only produce a validated plan until a human applies it.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "google-ads": "dist/index.js" },
+  "files": ["dist"],
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0"
+  }
+}

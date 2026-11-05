@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+client_secret*.json
+token.json
+plans/
+audit.log.jsonl
+coverage/
