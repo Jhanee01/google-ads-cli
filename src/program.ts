@@ -3,6 +3,7 @@ import { config, CliError } from './config.js'
 import { registerRead } from './commands/read.js'
 import { registerWrite } from './commands/write.js'
 import { registerAuth } from './commands/auth.js'
+import { registerSuggest } from './commands/suggest.js'
 
 /** Exact command names, or a prefix ending in "*" (e.g. "set-*"). */
 export function isDenied(command: string, deny: string[]): string | undefined {
@@ -16,12 +17,13 @@ export function buildProgram(): Command {
     .description(`Agent-friendly CLI for the Google Ads API.
 
 READ commands return JSON and never change anything.
-WRITE commands (add-negative, pause-keyword, set-budget, set-bidding, set-age, set-location) only
+WRITE commands (add-negative, add-keyword, pause-keyword, set-budget, set-bidding, set-age, set-location) only
 write a PLAN: the change is validated by the API (validateOnly) and saved to a file. Nothing changes
 until a human runs "google-ads apply <plan> --yes". Every apply is appended to an audit log.
 
 FOR AI AGENTS:
-  Output is always JSON. Start with "google-ads ping".
+  Output is always JSON. Start with "google-ads ping", then "google-ads suggest".
+  Judge findings with knowledge/playbook and the account's own knowledge base before proposing.
   Money is in the account currency (micros already converted); ctr 17.02 means 17.02 %.
   Get IDs from "campaigns" and "ad-groups" first; every write command takes IDs.
   After a write command, show the human its "summary" and "warnings" and the plan path. Do not apply.
@@ -38,7 +40,9 @@ QUICK REFERENCE:
   ages            performance by age range
   locations       targeted / excluded locations of a campaign
   geo-search      find geo target IDs by name
+  suggest         rule-based findings from the playbook, each with the plan command to run
   add-negative    PLAN  add negative keywords
+  add-keyword     PLAN  add (exact) keywords, e.g. promoted search terms
   pause-keyword   PLAN  pause / resume keywords
   set-budget      PLAN  daily budget (guarded)
   set-bidding     PLAN  max-conversions (target CPA) | max-clicks (max CPC) | manual-cpc
@@ -54,6 +58,7 @@ QUICK REFERENCE:
       if (denied) throw new CliError(`Command "${action.name()}" is blocked by the deny list ("${denied}").`)
     })
   registerRead(program)
+  registerSuggest(program)
   registerWrite(program)
   registerAuth(program)
   return program

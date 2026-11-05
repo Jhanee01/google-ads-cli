@@ -8,6 +8,14 @@ I built it to run real campaigns for small service businesses with Claude Code: 
 the search terms, finds wasted spend, and drafts the negative keywords, budget, bidding, age and
 location changes. I check the plan and apply it.
 
+Three layers, each doing what it is good at:
+
+| Layer | Does | Lives in |
+|---|---|---|
+| **Rules** | finds the measurable problems on live data, every time, the same way | `google-ads suggest` (`src/suggest.ts`) |
+| **Judgement** | weighs the findings against what the business is and what went wrong before | the agent + [`knowledge/`](knowledge/) |
+| **Approval** | decides; nothing changes without it | a human running `google-ads apply` |
+
 ```
  agent                          google-ads-cli                         Google Ads API
  ─────                          ──────────────                         ──────────────
@@ -56,10 +64,12 @@ location changes. I check the plan and apply it.
 | `ages --days [--campaign]` | performance by age range, exclusions and bid adjustments |
 | `locations --campaign` | targeted / excluded locations and the presence-vs-interest option |
 | `geo-search <name> [--country HU]` | geo target IDs by name |
+| `suggest --days [--rules file]` | rule-based findings from the playbook, each with its reason and the plan command |
 
 | Plan (validated, written to a file, nothing changes) | |
 |---|---|
 | `add-negative --campaign --terms a,b --match EXACT` | negative keywords; existing ones are skipped |
+| `add-keyword --ad-group --terms a,b --match EXACT` | keywords (e.g. promoted search terms); existing ones are skipped |
 | `pause-keyword --keyword "…" \| --criterion ag~id [--resume]` | pause or re-enable keywords |
 | `set-budget --campaign --daily 2500 [--force]` | daily budget, with the change guard |
 | `set-bidding --campaign --strategy max-conversions [--target-cpa 7000]` | bidding goal: conversions |
@@ -114,26 +124,63 @@ cp .env.example .env
 
 `.env`, client secret files, plans and the audit log are git-ignored.
 
+## `suggest`: the playbook as rules
+
+`google-ads suggest --days 30` reads the account (campaigns with impression share, keywords,
+search terms, negatives, age ranges) and runs the rules from [`knowledge/playbook`](knowledge/playbook/).
+Every rule comes from something that actually went wrong on a live account:
+
+| Rule | Fires when | Suggests |
+|---|---|---|
+| `invalid-conversion-period` / `measurement-suspect` | the window overlaps a period marked broken, or many clicks with zero conversions | verify tracking; conversion-based rules are switched off |
+| `no-auction` | zero impressions **and** no impression share data | check billing in the UI (invisible in the API) |
+| `smart-bidding-without-signal` | Smart Bidding with < 15 conversions (high if rank loss is high) | `set-bidding --strategy max-clicks --max-cpc …` |
+| `rank-lost` / `budget-limited` | lost impression share above the thresholds | assets and relevance / report only, never a budget raise |
+| `presence-or-interest` | local business on "presence or interest" | `set-location --presence-only` |
+| `broad-phrase-share` | broad + phrase take most of the keyword spend | `pause-keyword` for the biggest wasteful ones |
+| `always-negative` | search terms contain words the account never wants | one BROAD `add-negative` |
+| `wasted-search-terms` | terms above the waste threshold, zero conversions, trusted tracking | review, `add-negative` EXACT for the irrelevant ones |
+| `promote-to-exact` | converting terms (or clicked ones, if tracking is unverified) that are no exact keyword yet | `add-keyword --match EXACT` |
+| `age-without-conversions` | an age range spent without converting while the ad group converts | `set-age --exclude` |
+
+```json
+{
+  "rule": "smart-bidding-without-signal",
+  "severity": "high",
+  "campaign": "Search – Services – Budapest",
+  "title": "MAXIMIZE_CONVERSIONS with only 0 conversions: Smart Bidding has no signal",
+  "why": "Fewer than 15 conversions in 30 days, 90% of impressions lost to rank. Without a signal it lowers bids until the campaign stops serving.",
+  "playbook": "knowledge/playbook/bidding.md",
+  "action": "google-ads set-bidding --campaign 123 --strategy max-clicks --max-cpc 850"
+}
+```
+
+Findings are candidates. An action only creates a plan, and the agent is told to read the
+playbook page and the account's own pages before proposing it. Thresholds, the always-negative
+words and the invalid conversion periods are per account in `google-ads.rules.json`
+(see [`google-ads.rules.example.json`](google-ads.rules.example.json)).
+
 ## Using it with an agent
 
-`skills/google-ads/SKILL.md` is a ready Claude Code skill: copy it to `~/.claude/skills/google-ads/`.
-It tells the agent the workflow (read → explain → plan → hand over) and that `apply` is not its job.
-Run the agent with `DENY_COMMANDS=apply` so that this holds even if it tries.
-
-The tool deliberately has no opinions about *what* to change. My own rules (match type strategy,
-budget limits, which search terms are always negative) live in a separate knowledge base the agent
-reads; `docs/knowledge-base-template.md` shows the structure without my clients' numbers.
+- `skills/google-ads/SKILL.md` is a ready Claude Code skill: copy it to `~/.claude/skills/google-ads/`.
+  Workflow: `ping` → `suggest` → read the playbook and the account pages → explain → plan → hand over.
+- Run the agent with `DENY_COMMANDS=apply` so that `apply` stays the human's job even if it tries.
+- [`knowledge/playbook`](knowledge/playbook/) holds the general lessons (measurement, bidding,
+  diagnosis, match types, negatives, targeting, assets, approval).
+  [`knowledge/account-template`](knowledge/account-template/) is the per-account part you fill in
+  and keep private: the business, what it does not offer, broken tracking periods, history.
 
 ## Development
 
 ```bash
-npm test          # vitest: the change builders, and plan → apply end to end with a fake API
+npm test          # vitest: builders, suggest rules, and plan → apply end to end with a fake API
 npm run typecheck
 npm run dev -- report --days 7
 ```
 
-The change logic is in `src/builders.ts` as pure functions (current state + request → operations,
-summary, warnings), so every rule is unit-tested without the network. `test/cli.test.ts` runs the
+The change logic is in `src/builders.ts` and the suggest rules in `src/suggest.ts`, both as pure
+functions (data in, operations or findings out), so every rule is unit-tested without the network;
+`test/suggest.test.ts` has one scenario per playbook lesson. `test/cli.test.ts` runs the
 real command line against a mocked `fetch` and checks the safety properties: validate-only during
 planning, single use, hash, expiry, account match, `--yes`, and the deny list.
 

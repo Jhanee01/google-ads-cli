@@ -47,6 +47,39 @@ export function buildAddNegatives(input: {
   return c
 }
 
+// --- keywords -----------------------------------------------------------------
+
+export function buildAddKeywords(input: {
+  adGroupResource: string
+  adGroupName: string
+  terms: string[]
+  match: MatchType
+  existing: Array<{ text: string; match: string; status: string }>
+}): Change {
+  const c = change()
+  const have = new Map(input.existing.map(e => [`${e.text.toLowerCase()}|${e.match}`, e]))
+  const seen = new Set<string>()
+  const ops: Op[] = []
+  for (const raw of input.terms) {
+    const text = raw.trim().replace(/\s+/g, ' ')
+    if (!text) continue
+    if (text.split(' ').length > 10 || text.length > 80) throw new CliError(`Keyword too long (max 10 words, 80 characters): "${text}"`)
+    const key = `${text.toLowerCase()}|${input.match}`
+    const cur = have.get(key)
+    if (cur) {
+      c.warnings.push(`"${text}" [${input.match}] already exists (${cur.status})${cur.status === 'PAUSED' ? ': use pause-keyword --resume' : ''}, skipped`)
+      continue
+    }
+    if (seen.has(key)) continue
+    seen.add(key)
+    ops.push({ create: { adGroup: input.adGroupResource, status: 'ENABLED', keyword: { text, matchType: input.match } } })
+    c.summary.push(`add keyword "${text}" [${input.match}] to ad group "${input.adGroupName}"`)
+  }
+  if (input.match !== 'EXACT') c.warnings.push(`${input.match} keywords can spend fast on a small budget (knowledge/playbook/match-types.md).`)
+  push(c, 'adGroupCriteria:mutate', ops)
+  return c
+}
+
 // --- keyword status -----------------------------------------------------------
 
 export interface KeywordRow { resourceName: string; text: string; match: string; status: string; campaign: string; adGroup: string }

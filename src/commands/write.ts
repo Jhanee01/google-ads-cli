@@ -4,12 +4,12 @@ import { config, CliError } from '../config.js'
 import { mutate, resolveCustomerId, micros } from '../client.js'
 import { ids } from '../gaql.js'
 import {
-  ageList, bidAdjustments, buildAddNegatives, buildAge, buildBidding, buildBudget, buildKeywordStatus, buildLocation,
+  ageList, bidAdjustments, buildAddKeywords, buildAddNegatives, buildAge, buildBidding, buildBudget, buildKeywordStatus, buildLocation,
   matchType, strategy, type Change, type GeoType,
 } from '../builders.js'
 import { audit, checkPlan, createPlan, loadPlan, markApplied, savePlan } from '../plan.js'
 import {
-  adGroupAges, campaignConversions30d, campaignLocations, campaignNegatives, findKeywords, geoByIds, getAdGroup, getCampaign,
+  adGroupAges, adGroupKeywords, campaignConversions30d, campaignLocations, campaignNegatives, findKeywords, geoByIds, getAdGroup, getCampaign,
 } from '../state.js'
 import { cidOf, out } from './read.js'
 
@@ -64,6 +64,27 @@ EXAMPLES:
         campaignResource: camp.resourceName, campaignName: camp.name, terms: String(o.terms).split(','), match: matchType(o.match), existing,
       })
       await propose(cmd, 'add-negative', change, { campaign: camp.name, negatives: existing.length })
+    })
+
+  withPlanOptions(program.command('add-keyword').description(`Plan: add keywords to an ad group (EXACT by default).${PLAN_NOTE}
+
+Typical use: promote search terms that converted (see "google-ads suggest", rule promote-to-exact).
+Existing keywords with the same text and match type are skipped.
+
+EXAMPLES:
+  google-ads add-keyword --ad-group 456 --terms "service price city,service city" --match EXACT`))
+    .requiredOption('--ad-group <id>', 'ad group ID (see: google-ads ad-groups)')
+    .requiredOption('--terms <list>', 'comma-separated keywords')
+    .option('--match <type>', 'EXACT | PHRASE | BROAD', 'EXACT')
+    .action(async (_, cmd) => {
+      const o = cmd.opts()
+      const cid = cidOf(cmd)
+      const ag = await getAdGroup(o.adGroup, cid)
+      const existing = await adGroupKeywords(o.adGroup, cid)
+      const change = buildAddKeywords({
+        adGroupResource: ag.resourceName, adGroupName: `${ag.campaign} › ${ag.name}`, terms: String(o.terms).split(','), match: matchType(o.match), existing,
+      })
+      await propose(cmd, 'add-keyword', change, { adGroup: ag.name, keywords: existing.length })
     })
 
   withPlanOptions(program.command('pause-keyword').description(`Plan: pause (or with --resume, re-enable) keywords.${PLAN_NOTE}

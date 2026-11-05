@@ -1,0 +1,14 @@
+{
+  "$comment": "Copy to google-ads.rules.json (or pass --rules <file>). Amounts are in the account currency. Every field is optional.",
+  "localBusiness": true,
+  "wasteThreshold": null,
+  "minClicksForMeasurementCheck": 40,
+  "smartBiddingMinConversions": 15,
+  "broadPhraseMaxShare": 0.6,
+  "rankLostHigh": 0.5,
+  "budgetLostHigh": 0.2,
+  "alwaysNegative": ["free", "jobs", "diy"],
+  "invalidConversionPeriods": [
+    { "from": "2026-02-01", "to": "2026-04-30", "reason": "call tag never sent the conversion" }
+  ]
+}

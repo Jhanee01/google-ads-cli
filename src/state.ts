@@ -103,6 +103,22 @@ export async function findKeywords(
   }))
 }
 
+export async function adGroupKeywords(adGroupId?: string, cid?: string): Promise<Array<{ adGroupId: string; text: string; match: string; status: string }>> {
+  const where = [`ad_group_criterion.type = 'KEYWORD'`, `ad_group_criterion.negative = FALSE`, `ad_group_criterion.status != 'REMOVED'`]
+  if (adGroupId) where.push(`ad_group.id = ${id(adGroupId, 'ad group ID')}`)
+  const rows = await search(
+    `SELECT ad_group.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status
+     FROM ad_group_criterion WHERE ${where.join(' AND ')}`,
+    cid,
+  )
+  return rows.map(r => ({
+    adGroupId: String(r.adGroup?.id),
+    text: r.adGroupCriterion?.keyword?.text ?? '',
+    match: r.adGroupCriterion?.keyword?.matchType ?? '',
+    status: r.adGroupCriterion?.status ?? '',
+  }))
+}
+
 export async function getAdGroup(adGroupId: string, cid?: string): Promise<{ resourceName: string; name: string; campaign: string; channel: string; bidding: string }> {
   const rows = await search(
     `SELECT ad_group.resource_name, ad_group.name, campaign.name, campaign.advertising_channel_type, campaign.bidding_strategy_type

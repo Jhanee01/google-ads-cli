@@ -76,6 +76,16 @@ describe('read commands', () => {
   })
 })
 
+describe('suggest', () => {
+  it('runs every query and reports findings with playbook pages', async () => {
+    const res = await run('suggest', '--days', '7')
+    expect(res.rules).toBe('defaults')
+    expect(res.findings[0]).toMatchObject({ rule: 'no-auction', playbook: 'knowledge/playbook/diagnosis.md' })
+    expect(calls.filter(c => c.url.endsWith(':searchStream')).length).toBe(7)
+    expect(mutateCalls()).toHaveLength(0)
+  })
+})
+
 describe('plan → apply', () => {
   it('a write command only validates and writes a plan', async () => {
     const res = await run('set-budget', '--campaign', '10', '--daily', '2500')
