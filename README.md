@@ -1,5 +1,7 @@
 # google-ads-cli
 
+[![CI](https://github.com/Jhanee01/google-ads-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Jhanee01/google-ads-cli/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) [![node >=20](https://img.shields.io/badge/node-%3E%3D20-blue.svg)](package.json)
+
 An agent-friendly command line tool for the Google Ads API. An AI agent (Claude Code, or any
 agent that can run shell commands) uses it to read campaign data and to **propose** changes.
 Nothing changes in the account until a human approves the exact change.
