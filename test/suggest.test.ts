@@ -84,11 +84,11 @@ describe('match types', () => {
 describe('search terms', () => {
   const term = (t: string, over = {}) => ({ term: t, status: 'NONE', campaignId: '10', adGroupId: '20', adGroup: 'A', cost: 800, clicks: 4, conversions: 0, ...over })
   it('always-negative words match whole words, without accents, and become one BROAD negative', () => {
-    expect(containsWord('Konténer bérlés árak', 'kontener')).toBe(true)
-    expect(containsWord('konténeres', 'konténer')).toBe(false)
-    const f = analyze(data({ searchTerms: [term('konténer árak'), term('sitt kontener bérlés'), term('service city')] }), rules({ alwaysNegative: ['konténer'] }))
+    expect(containsWord('Container rentál prices', 'rental')).toBe(true)
+    expect(containsWord('containers', 'container')).toBe(false)
+    const f = analyze(data({ searchTerms: [term('container prices'), term('waste Contáiner rental'), term('service city')] }), rules({ alwaysNegative: ['container'] }))
       .findings.find(x => x.rule === 'always-negative')!
-    expect(f.action).toBe('google-ads add-negative --campaign 10 --terms "konténer" --match BROAD')
+    expect(f.action).toBe('google-ads add-negative --campaign 10 --terms "container" --match BROAD')
     expect(f.why).toContain('1600')
   })
   it('terms already covered by a negative or excluded are ignored', () => {
