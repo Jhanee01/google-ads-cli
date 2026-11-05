@@ -17,7 +17,7 @@ account's own pages before it proposes a plan.
 
 | Page | The lesson in one line |
 |---|---|
-| [measurement](playbook/measurement.md) | Prove that conversions are recorded before you optimise for them. A tag that "fired" in preview proved nothing. |
+| [measurement](playbook/measurement.md) | Conversions count only after tracking is verified end to end. Broken tracking can still show a few conversions for months. |
 | [bidding](playbook/bidding.md) | Smart Bidding without a conversion signal starves the campaign; use Maximize clicks with a CPC cap until the signal exists. |
 | [diagnosis](playbook/diagnosis.md) | "No impressions": rank loss, budget loss, or no auction at all (billing). The impression share columns tell which. |
 | [match-types](playbook/match-types.md) | On a small budget, broad and phrase eat the money. Exact first; promote proven search terms to exact. |

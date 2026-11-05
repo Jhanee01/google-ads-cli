@@ -7,6 +7,8 @@ import { existsSync, readFileSync } from 'node:fs'
 import { CliError } from './config.js'
 
 export interface Rules {
+  /** Date (YYYY-MM-DD) from which conversions were verified end to end. null = never: no conversion is trusted. */
+  trackingVerifiedOn: string | null
   localBusiness: boolean
   wasteThreshold: number | null
   minClicksForMeasurementCheck: number
@@ -20,6 +22,7 @@ export interface Rules {
 }
 
 export const DEFAULT_RULES: Rules = {
+  trackingVerifiedOn: null,
   localBusiness: true,
   wasteThreshold: null,
   minClicksForMeasurementCheck: 40,
@@ -45,10 +48,14 @@ export function loadRules(file?: string): { rules: Rules; source: string } {
   const rules = { ...DEFAULT_RULES }
   for (const key of Object.keys(DEFAULT_RULES) as Array<keyof Rules>) {
     if (raw[key] === undefined) continue
-    const want = Array.isArray(DEFAULT_RULES[key]) ? 'array' : key === 'wasteThreshold' ? 'number|null' : typeof DEFAULT_RULES[key]
+    const want = Array.isArray(DEFAULT_RULES[key]) ? 'array'
+      : key === 'wasteThreshold' ? 'number|null' : key === 'trackingVerifiedOn' ? 'string|null' : typeof DEFAULT_RULES[key]
     const got = Array.isArray(raw[key]) ? 'array' : raw[key] === null ? 'null' : typeof raw[key]
     if (!want.split('|').includes(got)) throw new CliError(`Rules: "${key}" must be ${want}, got ${got}`)
     ;(rules as any)[key] = raw[key]
+  }
+  if (rules.trackingVerifiedOn !== null && !/^\d{4}-\d{2}-\d{2}$/.test(rules.trackingVerifiedOn)) {
+    throw new CliError('Rules: "trackingVerifiedOn" must be a date like 2026-09-01, or null')
   }
   return { rules, source: path }
 }
@@ -127,30 +134,57 @@ export function analyze(data: SuggestData, rules: Rules): { measurementTrusted: 
   const waste = rules.wasteThreshold ?? Math.max(Math.round(accountCpc * 3), 1)
 
   // --- measurement: may conversions be used at all? ------------------------------------
+  // Default is NO. Broken tracking does not always show zero: it can report a few conversions
+  // for months. Conversions count only after someone verified them end to end (trackingVerifiedOn).
+  const playbookM = 'knowledge/playbook/measurement.md'
+  const skipped = 'Conversion-based rules are skipped; judge by CTR, cost and relevance.'
+  let accountTrusted = true
+  if (rules.trackingVerifiedOn === null) {
+    accountTrusted = false
+    add({
+      rule: 'tracking-unverified',
+      severity: 'high',
+      title: 'Conversion tracking has not been verified: conversion numbers are not used',
+      why: 'No "trackingVerifiedOn" date in the rules. Verify that a real click reaches "Recording conversions" in Google Ads, ' +
+        `then set the date. ${skipped}`,
+      playbook: playbookM,
+    })
+  } else if (rules.trackingVerifiedOn > data.windowStart) {
+    accountTrusted = false
+    add({
+      rule: 'tracking-unverified',
+      severity: 'high',
+      title: `The window starts before tracking was verified (${rules.trackingVerifiedOn})`,
+      why: `Window: ${data.windowStart} – ${data.windowEnd}. Use a shorter --days, or accept that conversions before the verification date may be wrong. ${skipped}`,
+      playbook: playbookM,
+    })
+  }
   const invalid = rules.invalidConversionPeriods.filter(p => p.from <= data.windowEnd && p.to >= data.windowStart)
   if (invalid.length) {
+    accountTrusted = false
     add({
       rule: 'invalid-conversion-period',
       severity: 'high',
       title: 'Conversion data in this window is marked invalid',
       why: invalid.map(p => `${p.from} – ${p.to}${p.reason ? `: ${p.reason}` : ''}`).join('; ') +
-        `. Window: ${data.windowStart} – ${data.windowEnd}. Conversion-based rules are skipped; judge by CTR, cost and relevance.`,
-      playbook: 'knowledge/playbook/measurement.md',
+        `. Window: ${data.windowStart} – ${data.windowEnd}. ${skipped}`,
+      playbook: playbookM,
     })
   }
   const trusted: Record<string, boolean> = {}
   for (const c of data.campaigns) {
     const suspect = c.clicks >= rules.minClicksForMeasurementCheck && c.conversions === 0
-    trusted[c.id] = !invalid.length && !suspect
-    if (suspect && !invalid.length) {
+    trusted[c.id] = accountTrusted && !suspect
+    if (suspect) {
       add({
         rule: 'measurement-suspect',
         severity: 'high',
         campaign: c.name,
         title: 'Clicks but zero conversions: check tracking before optimising',
         why: `${c.clicks} clicks and 0 conversions in ${data.windowDays} days. Ask the owner whether leads came in; ` +
-          'verify the conversion request leaves the browser and the action shows "Recording conversions". Conversion-based rules are skipped for this campaign.',
-        playbook: 'knowledge/playbook/measurement.md',
+          'verify the conversion request leaves the browser and the action shows "Recording conversions".' +
+          (accountTrusted ? ' It was verified before, so it may have broken since.' : ''),
+        playbook: playbookM,
       })
     }
   }

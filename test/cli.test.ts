@@ -80,7 +80,7 @@ describe('suggest', () => {
   it('runs every query and reports findings with playbook pages', async () => {
     const res = await run('suggest', '--days', '7')
     expect(res.rules).toBe('defaults')
-    expect(res.findings[0]).toMatchObject({ rule: 'no-auction', playbook: 'knowledge/playbook/diagnosis.md' })
+    expect(res.findings.map((f: any) => f.rule)).toEqual(['tracking-unverified', 'no-auction'])
     expect(calls.filter(c => c.url.endsWith(':searchStream')).length).toBe(7)
     expect(mutateCalls()).toHaveLength(0)
   })

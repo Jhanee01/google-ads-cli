@@ -132,7 +132,7 @@ Every rule comes from something that actually went wrong on a live account:
 
 | Rule | Fires when | Suggests |
 |---|---|---|
-| `invalid-conversion-period` / `measurement-suspect` | the window overlaps a period marked broken, or many clicks with zero conversions | verify tracking; conversion-based rules are switched off |
+| `tracking-unverified` / `invalid-conversion-period` / `measurement-suspect` | no verification date (the default), the window overlaps a period marked broken, or many clicks with zero conversions | verify tracking; conversion-based rules are switched off |
 | `no-auction` | zero impressions **and** no impression share data | check billing in the UI (invisible in the API) |
 | `smart-bidding-without-signal` | Smart Bidding with < 15 conversions (high if rank loss is high) | `set-bidding --strategy max-clicks --max-cpc …` |
 | `rank-lost` / `budget-limited` | lost impression share above the thresholds | assets and relevance / report only, never a budget raise |
@@ -156,8 +156,9 @@ Every rule comes from something that actually went wrong on a live account:
 ```
 
 Findings are candidates. An action only creates a plan, and the agent is told to read the
-playbook page and the account's own pages before proposing it. Thresholds, the always-negative
-words and the invalid conversion periods are per account in `google-ads.rules.json`
+playbook page and the account's own pages before proposing it. Conversions are **not trusted until the account's
+`trackingVerifiedOn` date is set**: broken tracking can report a few conversions for months and
+look fine. Thresholds, the always-negative words and the invalid conversion periods are per account in `google-ads.rules.json`
 (see [`google-ads.rules.example.json`](google-ads.rules.example.json)).
 
 ## Using it with an agent

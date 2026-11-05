@@ -11,10 +11,24 @@ const data = (over: Partial<SuggestData> = {}): SuggestData => ({
   windowDays: 30, windowStart: '2026-10-06', windowEnd: '2026-11-04',
   campaigns: [camp()], keywords: [], searchTerms: [], existingKeywords: [], negatives: [], ages: [], ...over,
 })
-const rules = (over = {}) => ({ ...DEFAULT_RULES, ...over })
+const rules = (over = {}) => ({ ...DEFAULT_RULES, trackingVerifiedOn: '2026-01-01', ...over })
 const rulesOf = (d: SuggestData, r = rules()) => analyze(d, r).findings.map(f => f.rule)
 
 describe('measurement first', () => {
+  it('by default conversions are not trusted, even when there are some', () => {
+    const res = analyze(data({
+      campaigns: [camp({ conversions: 5 })],
+      searchTerms: [{ term: 'service city', status: 'NONE', campaignId: '10', adGroupId: '20', adGroup: 'A', cost: 5000, clicks: 20, conversions: 0 }],
+    }), { ...DEFAULT_RULES })
+    expect(res.findings[0].rule).toBe('tracking-unverified')
+    expect(res.measurementTrusted['10']).toBe(false)
+    expect(res.findings.map(f => f.rule)).not.toContain('wasted-search-terms')
+  })
+  it('a window that starts before the verification date is not trusted', () => {
+    const res = analyze(data(), rules({ trackingVerifiedOn: '2026-10-20' }))
+    expect(res.findings[0]).toMatchObject({ rule: 'tracking-unverified', title: expect.stringContaining('2026-10-20') })
+    expect(analyze(data(), rules({ trackingVerifiedOn: '2026-10-01' })).measurementTrusted['10']).toBe(true)
+  })
   it('many clicks and zero conversions → tracking suspect, conversion rules skipped', () => {
     const res = analyze(data({
       campaigns: [camp({ conversions: 0 })],

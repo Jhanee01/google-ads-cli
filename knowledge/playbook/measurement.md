@@ -5,9 +5,12 @@
 
 ## What happened
 
-- For the first months the account reported a handful of conversions. They later turned out to
-  be meaningless: the tracking was broken for that whole period. Every "cost per conversion" and
-  "exact match converts 4x better" conclusion built on it had to be withdrawn.
+- The tracking was wrong for **most of the year** and was fixed in several rounds while the
+  campaigns kept running. Broken tracking did not look broken: in the first months it still
+  reported a handful of conversions, so nothing seemed off. Every "cost per conversion" and
+  "exact match converts 4x better" conclusion built on them had to be withdrawn.
+- That is why `suggest` trusts no conversion by default: only from the `trackingVerifiedOn` date
+  in the account's rules, i.e. after someone saw a real click arrive as *Recording conversions*.
 - After a fix, the tag manager preview showed the conversion tag firing three times on a test
   click. In live traffic the next ~90 clicks recorded **zero** conversions. The tag was stuck
   ("still running") because the container had no Google tag for the Ads account: a *Conversion

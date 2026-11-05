@@ -1,5 +1,6 @@
 {
-  "$comment": "Copy to google-ads.rules.json (or pass --rules <file>). Amounts are in the account currency. Every field is optional.",
+  "$comment": "Copy to google-ads.rules.json (or pass --rules <file>). Amounts are in the account currency. Every field is optional. trackingVerifiedOn: the date a real click was seen as 'Recording conversions' in Google Ads; until it is set, conversions are not used.",
+  "trackingVerifiedOn": null,
   "localBusiness": true,
   "wasteThreshold": null,
   "minClicksForMeasurementCheck": 40,
