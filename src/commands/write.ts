@@ -263,25 +263,33 @@ EXAMPLES:
       await propose(cmd, 'create-campaign', change, { spec: o.spec, existingCampaigns: existing.map(c => ({ name: c.name, status: c.status })) })
     })
 
-  withPlanOptions(program.command('set-campaign-status').description(`Plan: start or pause whole campaigns.${PLAN_NOTE}
+  withPlanOptions(program.command('set-campaign-status').description(`Plan: start, pause or remove whole campaigns.${PLAN_NOTE}
+
+--remove is PERMANENT (a removed campaign cannot be enabled again; its statistics stay).
+A running campaign is only removed with --force: pause it first.
 
 EXAMPLES:
   google-ads set-campaign-status --campaign 123,456 --enable
-  google-ads set-campaign-status --campaign 123 --pause`))
+  google-ads set-campaign-status --campaign 123 --pause
+  google-ads set-campaign-status --campaign 123 --remove`))
     .requiredOption('--campaign <ids>', 'comma-separated campaign IDs')
     .option('--enable', 'start the campaigns (ENABLED)')
     .option('--pause', 'pause the campaigns (PAUSED)')
+    .option('--remove', 'remove the campaigns permanently (REMOVED)')
+    .option('--force', 'allow removing a running campaign')
     .action(async (_, cmd) => {
       const o = cmd.opts()
-      if (Boolean(o.enable) === Boolean(o.pause)) throw new CliError('Give exactly one of --enable / --pause')
+      if ([o.enable, o.pause, o.remove].filter(Boolean).length !== 1) throw new CliError('Give exactly one of --enable / --pause / --remove')
       const cid = cidOf(cmd)
       const camps = []
       for (const cId of ids(o.campaign, 'campaign ID')) camps.push(await getCampaign(cId, cid))
+      const status = o.enable ? 'ENABLED' : o.pause ? 'PAUSED' : 'REMOVED'
       const change = buildCampaignStatus(
         camps.map(c => ({ resourceName: c.resourceName, name: c.name, status: c.status, dailyBudget: micros(c.budgetMicros) })),
-        o.enable ? 'ENABLED' : 'PAUSED',
+        status, Boolean(o.force),
       )
-      await propose(cmd, o.enable ? 'enable-campaign' : 'pause-campaign', change, camps.map(c => ({ campaign: c.name, status: c.status })))
+      const command = { ENABLED: 'enable-campaign', PAUSED: 'pause-campaign', REMOVED: 'remove-campaign' }[status]
+      await propose(cmd, command, change, camps.map(c => ({ campaign: c.name, status: c.status })))
     })
 
   program.command('apply').description(`Apply a plan created by a write command. THIS CHANGES THE ACCOUNT.
