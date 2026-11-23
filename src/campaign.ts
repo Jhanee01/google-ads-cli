@@ -116,18 +116,30 @@ export function negativeConflicts(c: CampaignSpec): string[] {
 /** Start (ENABLED) or pause (PAUSED) whole campaigns. */
 export function buildCampaignStatus(
   campaigns: Array<{ resourceName: string; name: string; status: string; dailyBudget: number }>,
-  status: 'ENABLED' | 'PAUSED',
+  status: 'ENABLED' | 'PAUSED' | 'REMOVED',
+  force = false,
 ): Change {
   const c: Change = { summary: [], warnings: [], mutations: [] }
   const ops: Op[] = []
   for (const camp of campaigns) {
     if (camp.status === 'REMOVED') throw new CliError(`Campaign "${camp.name}" is removed and cannot be changed.`)
+    if (status === 'REMOVED') {
+      if (camp.status === 'ENABLED' && !force) {
+        throw new CliError(`Campaign "${camp.name}" is running. Pause it first, or re-run with --force to remove it anyway.`)
+      }
+      ops.push({ remove: camp.resourceName })
+      c.summary.push(`REMOVE campaign "${camp.name}" (was ${camp.status})`)
+      continue
+    }
     if (camp.status === status) { c.warnings.push(`"${camp.name}" is already ${status}, skipped`); continue }
     ops.push({ updateMask: 'status', update: { resourceName: camp.resourceName, status } })
     c.summary.push(`${status === 'ENABLED' ? 'start' : 'pause'} campaign "${camp.name}" (daily budget ${camp.dailyBudget})`)
   }
   if (ops.length) c.mutations.push({ endpoint: 'campaigns:mutate', operations: ops })
   if (status === 'ENABLED' && ops.length) c.warnings.push('Started campaigns begin to spend as soon as their ads are approved.')
+  if (status === 'REMOVED' && ops.length) {
+    c.warnings.push('Removing is permanent: a removed campaign cannot be enabled again. Its past statistics stay in the reports.')
+  }
   return c
 }
 

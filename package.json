@@ -1,6 +1,6 @@
 {
   "name": "google-ads-cli",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Agent-friendly Google Ads CLI: JSON reports, and write commands that only produce a validated plan until a human applies it.",
   "license": "MIT",
   "type": "module",

@@ -91,3 +91,15 @@ describe('set-campaign-status', () => {
     expect(() => buildCampaignStatus([{ resourceName: 'x', name: 'R', status: 'REMOVED', dailyBudget: 1 }], 'ENABLED')).toThrow(/removed/)
   })
 })
+
+describe('set-campaign-status --remove', () => {
+  it('removes paused campaigns and guards running ones', async () => {
+    const { buildCampaignStatus } = await import('../src/campaign.js')
+    const c = buildCampaignStatus([{ resourceName: 'customers/1/campaigns/1', name: 'Old', status: 'PAUSED', dailyBudget: 10 }], 'REMOVED')
+    expect(c.mutations).toEqual([{ endpoint: 'campaigns:mutate', operations: [{ remove: 'customers/1/campaigns/1' }] }])
+    expect(c.warnings.join(' ')).toMatch(/permanent/)
+    const running = [{ resourceName: 'customers/1/campaigns/2', name: 'Live', status: 'ENABLED', dailyBudget: 10 }]
+    expect(() => buildCampaignStatus(running, 'REMOVED')).toThrow(/Pause it first/)
+    expect(buildCampaignStatus(running, 'REMOVED', true).mutations[0].operations).toEqual([{ remove: 'customers/1/campaigns/2' }])
+  })
+})

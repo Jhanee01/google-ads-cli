@@ -79,7 +79,7 @@ Three layers, each doing what it is good at:
 | `set-bidding --campaign --strategy manual-cpc` | manual CPC bids |
 | `set-age --ad-group --exclude 18-24,65+ / --include / --bid-adjust 35-44:+20` | age targeting |
 | `set-location --campaign --add / --exclude / --remove <geo IDs> [--presence-only]` | location targeting |
-| `set-campaign-status --campaign 123,456 --enable \| --pause` | start or pause whole campaigns |
+| `set-campaign-status --campaign 123,456 --enable \| --pause \| --remove [--force]` | start, pause or permanently remove whole campaigns (a running one is removed only with `--force`) |
 | `create-campaign --spec new-campaigns.json` | new Search campaigns from a JSON spec, created **PAUSED** (see below) |
 
 ### `create-campaign`: new Search campaigns from a spec
