@@ -99,7 +99,8 @@ export async function mutate(
   const cid = resolveCustomerId(customerId)
   const token = await getAccessToken()
   const url = `https://googleads.googleapis.com/${config.apiVersion}/customers/${cid}/${endpoint}`
-  const body: Record<string, unknown> = { operations }
+  // The cross-resource endpoint (used by create-campaign) names its list differently.
+  const body: Record<string, unknown> = endpoint === 'googleAds:mutate' ? { mutateOperations: operations } : { operations }
   if (opts.validateOnly) body.validateOnly = true
   const res = await fetch(url, { method: 'POST', headers: headers(token, cid), body: JSON.stringify(body) })
   if (!res.ok) throw new CliError(`${endpoint} → ${apiErrorMessage(res.status, await res.text())}`)

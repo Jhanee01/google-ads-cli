@@ -17,7 +17,8 @@ export function buildProgram(): Command {
     .description(`Agent-friendly CLI for the Google Ads API.
 
 READ commands return JSON and never change anything.
-WRITE commands (add-negative, add-keyword, pause-keyword, set-budget, set-bidding, set-age, set-location) only
+WRITE commands (add-negative, add-keyword, pause-keyword, set-budget, set-bidding, set-age, set-location,
+create-campaign, set-campaign-status) only
 write a PLAN: the change is validated by the API (validateOnly) and saved to a file. Nothing changes
 until a human runs "google-ads apply <plan> --yes". Every apply is appended to an audit log.
 
@@ -33,7 +34,7 @@ QUICK REFERENCE:
   ping            "does it work?"
   campaigns       IDs, bidding, budget, location option
   ad-groups       ad group IDs
-  report          campaign spend, clicks, conversions, cost per conversion
+  report          campaign spend, clicks, conversions, cost per conversion (--days 1 = yesterday)
   keywords        keyword performance with match type
   search-terms    what people searched (negative candidates)
   negatives       current negative keywords
@@ -48,6 +49,8 @@ QUICK REFERENCE:
   set-bidding     PLAN  max-conversions (target CPA) | max-clicks (max CPC) | manual-cpc
   set-age         PLAN  exclude / include age ranges, age bid adjustments
   set-location    PLAN  add / exclude / remove locations, presence vs interest
+  create-campaign PLAN  new Search campaigns from a JSON spec (created PAUSED)
+  set-campaign-status PLAN  start (--enable) or pause (--pause) campaigns
   apply           HUMAN applies a plan
   auth            HUMAN gets a new refresh token into .env`)
     .option('--deny <commands>', 'extra comma-separated denied commands (added to DENY_COMMANDS)', '')

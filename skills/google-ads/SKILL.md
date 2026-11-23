@@ -42,3 +42,8 @@ by design. Do not try to work around it.
   Only add `--force` when the user explicitly asks for that change.
 - Location IDs come from `google-ads geo-search <name> --country <CC>`; never guess them.
 - New keywords are EXACT unless the account's match strategy says otherwise.
+- New campaigns: write a JSON spec and run `create-campaign --spec <file>` (see the README). They
+  are always created PAUSED; starting them is a separate decision and a separate plan
+  (`set-campaign-status --campaign <ids> --enable`). Check the landing pages and that every
+  price or promise in the ad text is on the page before you write the spec.
+- `report --days 1` gives yesterday, a full finished day.

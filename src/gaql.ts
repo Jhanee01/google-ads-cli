@@ -16,8 +16,9 @@ export function str(value: string): string {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
 }
 
-/** --days 7|14|30 → GAQL date clause (anything else → 30). */
+/** --days 1|7|14|30 → GAQL date clause (1 = yesterday, a full finished day; anything else → 30). */
 export function dateClause(days: number): string {
+  if (days === 1) return 'segments.date DURING YESTERDAY'
   const d = [7, 14, 30].includes(days) ? days : 30
   return `segments.date DURING LAST_${d}_DAYS`
 }
