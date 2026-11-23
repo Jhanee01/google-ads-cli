@@ -59,7 +59,7 @@ Three layers, each doing what it is good at:
 | `ping` | connection and account check |
 | `campaigns` | IDs, status, bidding strategy, target CPA / max CPC, daily budget, location option |
 | `ad-groups [--campaign]` | ad group IDs |
-| `report --days 7\|14\|30` | cost, clicks, impressions, CTR, avg. CPC, conversions, cost per conversion |
+| `report --days 1\|7\|14\|30` | (`1` = yesterday) cost, clicks, impressions, CTR, avg. CPC, conversions, cost per conversion |
 | `keywords --days` | keyword performance with match type and the criterion ID |
 | `search-terms --days` | what people actually searched (negative keyword candidates) |
 | `negatives` | campaign-level negative keywords |
@@ -79,6 +79,57 @@ Three layers, each doing what it is good at:
 | `set-bidding --campaign --strategy manual-cpc` | manual CPC bids |
 | `set-age --ad-group --exclude 18-24,65+ / --include / --bid-adjust 35-44:+20` | age targeting |
 | `set-location --campaign --add / --exclude / --remove <geo IDs> [--presence-only]` | location targeting |
+| `set-campaign-status --campaign 123,456 --enable \| --pause` | start or pause whole campaigns |
+| `create-campaign --spec new-campaigns.json` | new Search campaigns from a JSON spec, created **PAUSED** (see below) |
+
+### `create-campaign`: new Search campaigns from a spec
+
+Everything in the spec goes into **one atomic** `googleAds:mutate` call (new resources reference
+each other through temporary IDs), so either all of it is created or nothing is:
+budget (not shared) → campaign → locations, languages, negatives → ad groups → keywords → one
+responsive search ad per ad group → call asset link, sitelinks, callouts.
+
+The campaign is always created **PAUSED**, Google Search only (no search partners, no Display),
+with Maximize clicks and a **required** CPC cap, location option PRESENCE, automatic text assets
+off. Starting it is a separate plan (`set-campaign-status --enable`).
+
+The command refuses before calling the API when: a campaign with that name exists, `geoIds` is
+empty (= the whole world), `maxCpc` is missing, an ad text is too long (headline 30, description
+90, sitelink 25, callout 25 characters, counted as characters, so accents count once), there are
+fewer than 3 headlines / 2 descriptions, or a campaign negative would block one of its own keywords.
+Identical sitelinks and callouts are created once and linked to every campaign that uses them.
+
+```json
+{
+  "campaigns": [{
+    "name": "Search – Moving – City",
+    "dailyBudget": 2000,
+    "maxCpc": 800,
+    "geoIds": ["1007633"],
+    "languageIds": ["1000"],
+    "callAssetId": "123456789",
+    "sitelinks": [{ "text": "Prices", "url": "https://example.com/prices" },
+                  { "text": "Get a quote", "url": "https://example.com/#contact" }],
+    "callouts": ["Open 24/7", "Invoice provided"],
+    "negatives": [{ "text": "jobs" }, { "text": "free" }, { "text": "truck rental", "match": "PHRASE" }],
+    "adGroups": [{
+      "name": "Moving – exact",
+      "keywords": ["moving city", "moving company city"],
+      "ad": {
+        "finalUrl": "https://example.com/moving",
+        "path1": "moving",
+        "headlines": [{ "text": "Moving in the City", "pin": 1 }, "Fair, fixed prices", "Call now"],
+        "descriptions": ["We move your flat with a van, loading included.", "Call us any day."]
+      }
+    }]
+  }]
+}
+```
+
+Keywords are EXACT unless an ad group sets `"match"`; negatives are BROAD unless they set it.
+Geo IDs come from `geo-search`; language IDs are Google's language constants (English `1000`).
+Commas are not allowed in keywords, and Google treats them as word breaks: a PHRASE negative
+`"5 ton"` would also block the search `"1,5 ton"`. Use EXACT for such negatives.
 
 | Human | |
 |---|---|

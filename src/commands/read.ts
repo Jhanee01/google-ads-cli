@@ -12,7 +12,7 @@ const AGE_LABEL = Object.fromEntries(Object.entries(AGE_RANGES).map(([k, v]) => 
 
 function withAccount(cmd: Command, period = false): Command {
   cmd.option('--customer-id <id>', 'account ID (no dashes); default GOOGLE_ADS_CUSTOMER_ID')
-  if (period) cmd.option('--days <n>', 'period: 7, 14 or 30', '30')
+  if (period) cmd.option('--days <n>', 'period: 1 (yesterday), 7, 14 or 30', '30')
   return cmd.option('--json', 'JSON output (always on, accepted for clarity)')
 }
 

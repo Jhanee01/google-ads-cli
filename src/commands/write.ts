@@ -10,8 +10,11 @@ import {
 import { audit, checkPlan, createPlan, loadPlan, markApplied, savePlan } from '../plan.js'
 import {
   adGroupAges, adGroupKeywords, campaignConversions30d, campaignLocations, campaignNegatives, findKeywords, geoByIds, getAdGroup, getCampaign,
+  listCampaigns,
 } from '../state.js'
 import { cidOf, out } from './read.js'
+import { readFileSync } from 'node:fs'
+import { buildCampaignStatus, buildCreateCampaigns, type CreateSpec } from '../campaign.js'
 
 const SMART_BIDDING = new Set(['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS'])
 
@@ -229,6 +232,56 @@ EXAMPLES:
         campaign: camp.name, locationOption: camp.geoTargetType,
         locations: locations.map(l => ({ id: l.geoId, name: names[l.geoId], excluded: l.negative })),
       })
+    })
+
+  withPlanOptions(program.command('create-campaign').description(`Plan: create new Search campaigns from a JSON spec file.${PLAN_NOTE}
+
+Everything goes into ONE atomic googleAds:mutate call: budget (not shared), campaign (PAUSED,
+Google Search only, Maximize clicks with a required CPC cap, location option PRESENCE, text asset
+automation off, not EU political), locations, languages, campaign negatives, ad groups, keywords
+(EXACT by default), one RSA per ad group, call asset link, sitelinks and callouts.
+Refuses: an existing campaign name, no locations, no CPC cap, over-long ad texts, or a negative
+that would block the campaign's own keyword.
+
+SPEC (JSON): { "campaigns": [ { "name", "dailyBudget", "maxCpc", "geoIds": [], "languageIds": [],
+  "callAssetId"?, "sitelinks"?: [{ "text", "url", "description1"?, "description2"? }], "callouts"?: [],
+  "negatives"?: [{ "text", "match"?: "BROAD" }],
+  "adGroups": [{ "name", "keywords": [], "match"?: "EXACT",
+    "ad": { "finalUrl", "path1"?, "path2"?, "headlines": ["text" | { "text", "pin": 1|2|3 }], "descriptions": [] } }] } ] }
+
+EXAMPLES:
+  google-ads create-campaign --spec specs/new-campaigns.json`))
+    .requiredOption('--spec <file>', 'path of the JSON spec')
+    .action(async (_, cmd) => {
+      const o = cmd.opts()
+      const cid = cidOf(cmd)
+      const customerId = resolveCustomerId(cid)
+      let spec: CreateSpec
+      try { spec = JSON.parse(readFileSync(o.spec, 'utf8')) } catch (e) { throw new CliError(`Cannot read the spec ${o.spec}: ${(e as Error).message}`) }
+      const existing = await listCampaigns(cid)
+      const change = buildCreateCampaigns(customerId, spec, existing.filter(c => c.status !== 'REMOVED').map(c => c.name))
+      await propose(cmd, 'create-campaign', change, { spec: o.spec, existingCampaigns: existing.map(c => ({ name: c.name, status: c.status })) })
+    })
+
+  withPlanOptions(program.command('set-campaign-status').description(`Plan: start or pause whole campaigns.${PLAN_NOTE}
+
+EXAMPLES:
+  google-ads set-campaign-status --campaign 123,456 --enable
+  google-ads set-campaign-status --campaign 123 --pause`))
+    .requiredOption('--campaign <ids>', 'comma-separated campaign IDs')
+    .option('--enable', 'start the campaigns (ENABLED)')
+    .option('--pause', 'pause the campaigns (PAUSED)')
+    .action(async (_, cmd) => {
+      const o = cmd.opts()
+      if (Boolean(o.enable) === Boolean(o.pause)) throw new CliError('Give exactly one of --enable / --pause')
+      const cid = cidOf(cmd)
+      const camps = []
+      for (const cId of ids(o.campaign, 'campaign ID')) camps.push(await getCampaign(cId, cid))
+      const change = buildCampaignStatus(
+        camps.map(c => ({ resourceName: c.resourceName, name: c.name, status: c.status, dailyBudget: micros(c.budgetMicros) })),
+        o.enable ? 'ENABLED' : 'PAUSED',
+      )
+      await propose(cmd, o.enable ? 'enable-campaign' : 'pause-campaign', change, camps.map(c => ({ campaign: c.name, status: c.status })))
     })
 
   program.command('apply').description(`Apply a plan created by a write command. THIS CHANGES THE ACCOUNT.

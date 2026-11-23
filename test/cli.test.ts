@@ -34,6 +34,7 @@ function fakeApi(url: string, body: any): unknown {
     if (q.includes('FROM campaign ')) return [{ results: [CAMPAIGN_ROW] }]
     return [{ results: [] }]
   }
+  if (url.endsWith('googleAds:mutate')) return { mutateOperationResponses: body.mutateOperations.map(() => ({})) }
   if (url.endsWith(':mutate')) return { results: body.operations.map((_: unknown, i: number) => ({ resourceName: `customers/111/x/${i}` })) }
   throw new Error(`unexpected ${url}`)
 }
@@ -158,7 +159,46 @@ describe('helpers', () => {
   it('GAQL guards', () => {
     expect(dateClause(7)).toBe('segments.date DURING LAST_7_DAYS')
     expect(dateClause(90)).toBe('segments.date DURING LAST_30_DAYS')
+    expect(dateClause(1)).toBe('segments.date DURING YESTERDAY')
     expect(str("o'reilly")).toBe("'o\\'reilly'")
     expect(() => id('10 OR 1=1')).toThrow(/numeric/)
+  })
+})
+
+describe('create-campaign and set-campaign-status', () => {
+  const spec = {
+    campaigns: [{
+      name: 'Search – Moving – City', dailyBudget: 2000, maxCpc: 800, geoIds: ['1007633'], languageIds: ['1000'],
+      callouts: ['Open 24/7'], negatives: [{ text: 'jobs' }],
+      adGroups: [{ name: 'Moving', keywords: ['moving city'], ad: { finalUrl: 'https://example.com/moving', headlines: ['Moving in the City', 'Fair prices', 'Call now'], descriptions: ['We move your flat.', 'Call us any time.'] } }],
+    }],
+  }
+
+  it('plans one atomic googleAds:mutate with mutateOperations, validate-only, then applies it', async () => {
+    const file = join(dir, 'spec.json')
+    writeFileSync(file, JSON.stringify(spec))
+    const res = await run('create-campaign', '--spec', file)
+    expect(res.status).toBe('planned')
+    const validate = mutateCalls()
+    expect(validate).toHaveLength(1)
+    expect(validate[0].url).toContain('/customers/111000/googleAds:mutate')
+    expect(validate[0].body.validateOnly).toBe(true)
+    expect(validate[0].body.operations).toBeUndefined()
+    expect(validate[0].body.mutateOperations[1].campaignOperation.create.status).toBe('PAUSED')
+    await run('apply', res.plan, '--yes')
+    expect(mutateCalls().at(-1)!.body.validateOnly).toBeUndefined()
+  })
+
+  it('refuses a spec whose campaign name already exists', async () => {
+    const file = join(dir, 'spec.json')
+    writeFileSync(file, JSON.stringify({ campaigns: [{ ...spec.campaigns[0], name: 'Search – City' }] }))
+    await expect(run('create-campaign', '--spec', file)).rejects.toThrow(/already exists/)
+    expect(mutateCalls()).toHaveLength(0)
+  })
+
+  it('set-campaign-status plans a status change', async () => {
+    const res = await run('set-campaign-status', '--campaign', '10', '--pause')
+    expect(res.summary[0]).toMatch(/pause campaign "Search – City"/)
+    expect(mutateCalls()[0].body.operations[0]).toEqual({ updateMask: 'status', update: { resourceName: 'customers/111/campaigns/10', status: 'PAUSED' } })
   })
 })
