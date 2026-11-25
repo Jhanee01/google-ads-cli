@@ -63,6 +63,8 @@ Three layers, each doing what it is good at:
 | `keywords --days` | keyword performance with match type, the criterion ID, and Quality Score with its three components |
 | `search-terms --days` | what people actually searched (negative keyword candidates) |
 | `negatives` | campaign-level negative keywords |
+| `negative-lists` | shared negative keyword lists: their keywords and the campaigns they are attached to |
+| `ngrams --days 60 [--campaign] [--n 1,2]` | search terms split into 1–3 word pieces with summed cost, clicks, conversions; pieces an existing negative already blocks are hidden |
 | `ages --days [--campaign]` | performance by age range, exclusions and bid adjustments |
 | `locations --campaign` | targeted / excluded locations and the presence-vs-interest option |
 | `geo-search <name> [--country HU]` | geo target IDs by name |
@@ -70,7 +72,9 @@ Three layers, each doing what it is good at:
 
 | Plan (validated, written to a file, nothing changes) | |
 |---|---|
-| `add-negative --campaign --terms a,b --match EXACT` | negative keywords; existing ones are skipped |
+| `add-negative --campaign \| --list --terms a,b --match EXACT [--with-accent-variants]` | negative keywords for a campaign or a shared list; existing and already covered ones are skipped; `--with-accent-variants` adds the unaccented twin of every accented term |
+| `create-negative-list --name --terms --match BROAD [--attach 1,2]` | a new shared negative keyword list, attached in the same atomic call |
+| `attach-negative-list --list --campaign 1,2 [--detach]` | attach or detach a shared list |
 | `add-keyword --ad-group --terms a,b --match EXACT` | keywords (e.g. promoted search terms); existing ones are skipped |
 | `pause-keyword --keyword "…" \| --criterion ag~id [--resume]` | pause or re-enable keywords |
 | `set-budget --campaign --daily 2500 [--force]` | daily budget, with the change guard |
@@ -191,7 +195,9 @@ Every rule comes from something that actually went wrong on a live account:
 | `rank-lost` / `budget-limited` | lost impression share above the thresholds | assets and relevance / report only, never a budget raise |
 | `presence-or-interest` | local business on "presence or interest" | `set-location --presence-only` |
 | `broad-phrase-share` | broad + phrase take most of the keyword spend | `pause-keyword` for the biggest wasteful ones |
-| `always-negative` | search terms contain words the account never wants | one BROAD `add-negative` |
+| `negative-missing-accent-variant` | an accented negative has no unaccented twin (Google treats them as two keywords) and nothing else covers it | `add-negative` with the twins, one per match type |
+| `negative-blocks-keyword` | a negative of the campaign, an ad group or an attached list blocks an enabled keyword's own search | narrow or remove the negative |
+| `always-negative` | search terms contain words the account never wants | one BROAD `add-negative --with-accent-variants` |
 | `wasted-search-terms` | terms above the waste threshold, zero conversions, trusted tracking | review, `add-negative` EXACT for the irrelevant ones |
 | `promote-to-exact` | converting terms (or clicked ones, if tracking is unverified) that are no exact keyword yet | `add-keyword --match EXACT` |
 | `low-quality-score-spend` | a large share of the keyword spend goes to keywords with Quality Score ≤ 4 | report the weakest component (CTR, ad relevance, landing page) and its fix |

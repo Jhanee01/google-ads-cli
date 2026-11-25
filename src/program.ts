@@ -4,6 +4,7 @@ import { registerRead } from './commands/read.js'
 import { registerWrite } from './commands/write.js'
 import { registerAuth } from './commands/auth.js'
 import { registerSuggest } from './commands/suggest.js'
+import { registerNegatives } from './commands/negatives.js'
 
 /** Exact command names, or a prefix ending in "*" (e.g. "set-*"). */
 export function isDenied(command: string, deny: string[]): string | undefined {
@@ -17,8 +18,8 @@ export function buildProgram(): Command {
     .description(`Agent-friendly CLI for the Google Ads API.
 
 READ commands return JSON and never change anything.
-WRITE commands (add-negative, add-keyword, pause-keyword, set-budget, set-bidding, set-age, set-location,
-create-campaign, set-campaign-status) only
+WRITE commands (add-negative, create-negative-list, attach-negative-list, add-keyword, pause-keyword,
+set-budget, set-bidding, set-age, set-location, create-campaign, set-campaign-status) only
 write a PLAN: the change is validated by the API (validateOnly) and saved to a file. Nothing changes
 until a human runs "google-ads apply <plan> --yes". Every apply is appended to an audit log.
 
@@ -37,12 +38,16 @@ QUICK REFERENCE:
   report          campaign spend, clicks, conversions, cost per conversion (--days 1 = yesterday)
   keywords        keyword performance with match type
   search-terms    what people searched (negative candidates)
-  negatives       current negative keywords
+  negatives       current negative keywords (campaign level)
+  negative-lists  shared negative keyword lists, their keywords and campaigns
+  ngrams          search terms split into 1-3 word pieces with cost (find one word to exclude)
   ages            performance by age range
   locations       targeted / excluded locations of a campaign
   geo-search      find geo target IDs by name
   suggest         rule-based findings from the playbook, each with the plan command to run
-  add-negative    PLAN  add negative keywords
+  add-negative    PLAN  add negative keywords to a campaign or a shared list (--with-accent-variants)
+  create-negative-list PLAN  new shared negative keyword list, optionally attached
+  attach-negative-list PLAN  attach / detach a shared list
   add-keyword     PLAN  add (exact) keywords, e.g. promoted search terms
   pause-keyword   PLAN  pause / resume keywords
   set-budget      PLAN  daily budget (guarded)
@@ -63,6 +68,7 @@ QUICK REFERENCE:
   registerRead(program)
   registerSuggest(program)
   registerWrite(program)
+  registerNegatives(program)
   registerAuth(program)
   return program
 }
