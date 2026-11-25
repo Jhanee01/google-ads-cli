@@ -1,5 +1,6 @@
 import type { Command } from 'commander'
 import { createInterface } from 'node:readline/promises'
+import { getNegativeList, negativeState } from '../state.js'
 import { config, CliError } from '../config.js'
 import { mutate, resolveCustomerId, micros } from '../client.js'
 import { ids } from '../gaql.js'
@@ -18,19 +19,19 @@ import { buildCampaignStatus, buildCreateCampaigns, type CreateSpec } from '../c
 
 const SMART_BIDDING = new Set(['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS'])
 
-const PLAN_NOTE = `
+export const PLAN_NOTE = `
 SAFETY: this command does NOT change the account. It reads the current state, builds the change,
 has the Google Ads API validate it (validateOnly), and writes a plan file. A human applies it with:
   google-ads apply <plan-file> --yes`
 
-function withPlanOptions(cmd: Command): Command {
+export function withPlanOptions(cmd: Command): Command {
   return cmd
     .option('--customer-id <id>', 'account ID (no dashes); default GOOGLE_ADS_CUSTOMER_ID')
     .option('--offline', 'skip the API validation of the plan (not recommended)')
     .option('--json', 'JSON output (always on, accepted for clarity)')
 }
 
-async function propose(cmd: Command, command: string, change: Change, before: unknown): Promise<void> {
+export async function propose(cmd: Command, command: string, change: Change, before: unknown): Promise<void> {
   const customerId = resolveCustomerId(cidOf(cmd))
   if (!change.mutations.length) throw new CliError(`Nothing to change.${change.warnings.length ? ' ' + change.warnings.join('; ') : ''}`)
   const offline = Boolean(cmd.opts().offline)
@@ -51,20 +52,44 @@ async function propose(cmd: Command, command: string, change: Change, before: un
 }
 
 export function registerWrite(program: Command): void {
-  withPlanOptions(program.command('add-negative').description(`Plan: add negative keywords to a campaign.${PLAN_NOTE}
+  withPlanOptions(program.command('add-negative').description(`Plan: add negative keywords to a campaign, or to a shared negative keyword list (--list).${PLAN_NOTE}
+
+Negatives do not match close variants: add plurals and synonyms yourself. Google treats an
+accented and an unaccented negative as two different keywords ("állás" ≠ "allas"):
+--with-accent-variants adds the unaccented form of every accented term.
+Terms already present, or already covered by a broader existing negative (also from a list
+attached to the campaign), are skipped. Commas and ! @ % ^ ( ) = { } ; ~ < > ? \\ | are refused.
+See knowledge/playbook/negatives.md.
 
 EXAMPLES:
-  google-ads add-negative --campaign 123 --terms "free,jobs,diy" --match EXACT`))
-    .requiredOption('--campaign <id>', 'campaign ID (see: google-ads campaigns)')
+  google-ads add-negative --campaign 123 --terms "free,jobs,diy" --match EXACT
+  google-ads add-negative --campaign 123 --terms "állás,bérlés" --match BROAD --with-accent-variants
+  google-ads add-negative --list 987 --terms "ingyen" --match BROAD --with-accent-variants`))
+    .option('--campaign <id>', 'campaign ID (see: google-ads campaigns)')
+    .option('--list <id>', 'shared negative keyword list ID instead of a campaign (see: google-ads negative-lists)')
     .requiredOption('--terms <list>', 'comma-separated terms')
     .option('--match <type>', 'EXACT | PHRASE | BROAD', 'EXACT')
+    .option('--with-accent-variants', 'also add the unaccented form of every accented term')
     .action(async (_, cmd) => {
       const o = cmd.opts()
       const cid = cidOf(cmd)
+      if (Boolean(o.campaign) === Boolean(o.list)) throw new CliError('Give exactly one of --campaign or --list')
+      const terms = String(o.terms).split(',')
+      const accentVariants = Boolean(o.withAccentVariants)
+      if (o.list) {
+        const { list, members } = await getNegativeList(o.list, cid)
+        const change = buildAddNegatives({
+          sharedSetResource: list.resourceName, campaignName: list.name, terms, match: matchType(o.match), existing: members, accentVariants,
+        })
+        await propose(cmd, 'add-negative', change, { list: list.name, negatives: members.length })
+        return
+      }
       const camp = await getCampaign(o.campaign, cid)
-      const existing = await campaignNegatives(camp.id, cid)
+      const { negatives, lists } = await negativeState(cid)
+      const attached = new Set(lists.filter(l => l.campaignIds.includes(camp.id)).map(l => l.id))
+      const existing = negatives.filter(n => (n.level === 'campaign' && n.campaignId === camp.id) || (n.level === 'list' && attached.has(n.listId ?? '')))
       const change = buildAddNegatives({
-        campaignResource: camp.resourceName, campaignName: camp.name, terms: String(o.terms).split(','), match: matchType(o.match), existing,
+        campaignResource: camp.resourceName, campaignName: camp.name, terms, match: matchType(o.match), existing, accentVariants,
       })
       await propose(cmd, 'add-negative', change, { campaign: camp.name, negatives: existing.length })
     })

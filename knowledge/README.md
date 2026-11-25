@@ -21,7 +21,7 @@ account's own pages before it proposes a plan.
 | [bidding](playbook/bidding.md) | Smart Bidding without a conversion signal starves the campaign; use Maximize clicks with a CPC cap until the signal exists. |
 | [diagnosis](playbook/diagnosis.md) | "No impressions": rank loss, budget loss, or no auction at all (billing). The impression share columns tell which. |
 | [match-types](playbook/match-types.md) | On a small budget, broad and phrase eat the money. Exact first; promote proven search terms to exact. |
-| [negatives](playbook/negatives.md) | Build the negative list from "what we don't offer" before launch, by category. |
+| [negatives](playbook/negatives.md) | Build the negative list before launch, by category; negatives match no close variants, and an accented and an unaccented negative are two keywords. |
 | [targeting](playbook/targeting.md) | Presence-only for local services; age, gender and schedule only with valid conversion data. |
 | [quality-score](playbook/quality-score.md) | A low Quality Score is a higher price per click; fix the BELOW_AVERAGE component that carries the most spend. |
 | [assets-and-mobile](playbook/assets-and-mobile.md) | When calls are the goal and traffic is mobile, assets and call-focused ads are the cheapest rank gain. |

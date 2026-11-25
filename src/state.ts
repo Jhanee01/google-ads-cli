@@ -3,6 +3,7 @@ import { CliError } from './config.js'
 import { search, micros } from './client.js'
 import { id, str, ids as idList } from './gaql.js'
 import type { AgeCriterion, KeywordRow, LocationCriterion, MatchType } from './builders.js'
+import type { ScopedNegative } from './negatives.js'
 
 export interface CampaignState {
   resourceName: string
@@ -103,20 +104,85 @@ export async function findKeywords(
   }))
 }
 
-export async function adGroupKeywords(adGroupId?: string, cid?: string): Promise<Array<{ adGroupId: string; text: string; match: string; status: string }>> {
+export interface AdGroupKeyword {
+  adGroupId: string
+  adGroup: string
+  campaignId: string
+  text: string
+  match: string
+  /** the keyword's own status */
+  status: string
+  /** ENABLED only when the keyword, its ad group and its campaign are all enabled */
+  serving: boolean
+}
+
+export async function adGroupKeywords(adGroupId?: string, cid?: string): Promise<AdGroupKeyword[]> {
   const where = [`ad_group_criterion.type = 'KEYWORD'`, `ad_group_criterion.negative = FALSE`, `ad_group_criterion.status != 'REMOVED'`]
   if (adGroupId) where.push(`ad_group.id = ${id(adGroupId, 'ad group ID')}`)
   const rows = await search(
-    `SELECT ad_group.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type, ad_group_criterion.status
+    `SELECT ad_group.id, ad_group.name, ad_group.status, campaign.id, campaign.status, ad_group_criterion.keyword.text,
+            ad_group_criterion.keyword.match_type, ad_group_criterion.status
      FROM ad_group_criterion WHERE ${where.join(' AND ')}`,
     cid,
   )
   return rows.map(r => ({
     adGroupId: String(r.adGroup?.id),
+    adGroup: r.adGroup?.name ?? '',
+    campaignId: String(r.campaign?.id),
     text: r.adGroupCriterion?.keyword?.text ?? '',
     match: r.adGroupCriterion?.keyword?.matchType ?? '',
     status: r.adGroupCriterion?.status ?? '',
+    serving: r.adGroupCriterion?.status === 'ENABLED' && r.adGroup?.status === 'ENABLED' && r.campaign?.status === 'ENABLED',
   }))
+}
+
+export interface NegativeList { id: string; resourceName: string; name: string; memberCount: number; campaignIds: string[] }
+
+/**
+ * Every negative keyword of the account by level (campaign, ad group, shared list) and the
+ * shared negative keyword lists with the campaigns they are attached to.
+ */
+export async function negativeState(cid?: string): Promise<{ negatives: ScopedNegative[]; lists: NegativeList[] }> {
+  const [camp, ag, sets, members, links] = await Promise.all([
+    search(
+      `SELECT campaign.id, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type FROM campaign_criterion
+       WHERE campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = TRUE AND campaign.status != 'REMOVED'`, cid),
+    search(
+      `SELECT campaign.id, ad_group.id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM ad_group_criterion
+       WHERE ad_group_criterion.type = 'KEYWORD' AND ad_group_criterion.negative = TRUE AND ad_group_criterion.status != 'REMOVED'
+         AND ad_group.status != 'REMOVED'`, cid),
+    search(
+      `SELECT shared_set.id, shared_set.resource_name, shared_set.name, shared_set.member_count FROM shared_set
+       WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND shared_set.status = 'ENABLED'`, cid),
+    search(
+      `SELECT shared_set.id, shared_criterion.keyword.text, shared_criterion.keyword.match_type FROM shared_criterion
+       WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND shared_set.status = 'ENABLED' AND shared_criterion.type = 'KEYWORD'`, cid),
+    search(
+      `SELECT campaign.id, shared_set.id FROM campaign_shared_set
+       WHERE shared_set.type = 'NEGATIVE_KEYWORDS' AND campaign_shared_set.status = 'ENABLED' AND campaign.status != 'REMOVED'`, cid),
+  ])
+  const lists: NegativeList[] = sets.map(r => ({
+    id: String(r.sharedSet?.id), resourceName: r.sharedSet?.resourceName ?? '', name: r.sharedSet?.name ?? '',
+    memberCount: Number(r.sharedSet?.memberCount ?? 0),
+    campaignIds: links.filter(l => String(l.sharedSet?.id) === String(r.sharedSet?.id)).map(l => String(l.campaign?.id)),
+  }))
+  const listName = new Map(lists.map(l => [l.id, l.name]))
+  const negatives: ScopedNegative[] = [
+    ...camp.map(r => ({ level: 'campaign' as const, campaignId: String(r.campaign?.id),
+      text: r.campaignCriterion?.keyword?.text ?? '', match: r.campaignCriterion?.keyword?.matchType ?? '' })),
+    ...ag.map(r => ({ level: 'adGroup' as const, campaignId: String(r.campaign?.id), adGroupId: String(r.adGroup?.id),
+      text: r.adGroupCriterion?.keyword?.text ?? '', match: r.adGroupCriterion?.keyword?.matchType ?? '' })),
+    ...members.filter(r => listName.has(String(r.sharedSet?.id))).map(r => ({ level: 'list' as const, listId: String(r.sharedSet?.id),
+      listName: listName.get(String(r.sharedSet?.id)), text: r.sharedCriterion?.keyword?.text ?? '', match: r.sharedCriterion?.keyword?.matchType ?? '' })),
+  ]
+  return { negatives, lists }
+}
+
+export async function getNegativeList(listId: string, cid?: string): Promise<{ list: NegativeList; members: Array<{ text: string; match: string }> }> {
+  const { negatives, lists } = await negativeState(cid)
+  const list = lists.find(l => l.id === id(listId, 'list ID'))
+  if (!list) throw new CliError(`Negative keyword list ${listId} not found (see: google-ads negative-lists)`)
+  return { list, members: negatives.filter(n => n.level === 'list' && n.listId === list.id).map(n => ({ text: n.text, match: n.match })) }
 }
 
 export async function getAdGroup(adGroupId: string, cid?: string): Promise<{ resourceName: string; name: string; campaign: string; channel: string; bidding: string }> {

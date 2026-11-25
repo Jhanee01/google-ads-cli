@@ -24,7 +24,8 @@ by design. Do not try to work around it.
 2. For each finding, read the playbook page it names and the matching account page. Drop the
    findings that the account knowledge explains (e.g. a term that looks wasteful but is the core
    service).
-3. Dig deeper where needed: `report`, `keywords`, `search-terms`, `ages`, `locations`, `campaigns`.
+3. Dig deeper where needed: `report`, `keywords`, `search-terms`, `ngrams`, `negatives`,
+   `negative-lists`, `ages`, `locations`, `campaigns`.
 4. Explain to the user in plain words: what is wrong, the numbers, the playbook reason.
 5. For each change the user wants, run the finding's `action` (or the matching write command).
    Show the plan's `summary`, `warnings` and path. Stop there; the user applies it.
@@ -42,6 +43,11 @@ by design. Do not try to work around it.
   Only add `--force` when the user explicitly asks for that change.
 - Location IDs come from `google-ads geo-search <name> --country <CC>`; never guess them.
 - New keywords are EXACT unless the account's match strategy says otherwise.
+- **Negatives:** follow `knowledge/playbook/negatives.md`. The CLI does the mechanical part
+  (Google's matching, accent twins, conflicts with own keywords, redundancy, invalid characters);
+  you decide whether a word is really never wanted. Words wrong for every campaign go into a
+  shared list (`create-negative-list --attach`); use `--with-accent-variants` for accented terms;
+  mine `ngrams --days 60` for single words that spoil many searches.
 - New campaigns: write a JSON spec and run `create-campaign --spec <file>` (see the README). They
   are always created PAUSED; starting them is a separate decision and a separate plan
   (`set-campaign-status --campaign <ids> --enable`). Check the landing pages and that every

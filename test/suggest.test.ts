@@ -88,12 +88,23 @@ describe('search terms', () => {
     expect(containsWord('containers', 'container')).toBe(false)
     const f = analyze(data({ searchTerms: [term('container prices'), term('waste Contáiner rental'), term('service city')] }), rules({ alwaysNegative: ['container'] }))
       .findings.find(x => x.rule === 'always-negative')!
-    expect(f.action).toBe('google-ads add-negative --campaign 10 --terms "container" --match BROAD')
+    expect(f.action).toBe('google-ads add-negative --campaign 10 --terms "container" --match BROAD --with-accent-variants')
     expect(f.why).toContain('1600')
   })
   it('terms already covered by a negative or excluded are ignored', () => {
     const d = data({ searchTerms: [term('free pickup'), term('jobs here', { status: 'EXCLUDED' })], negatives: [{ campaignId: '10', text: 'free' }] })
     expect(rulesOf(d, rules({ alwaysNegative: ['free', 'jobs'] }))).not.toContain('always-negative')
+  })
+  it('an accented negative does not cover the unaccented search (as in Google)', () => {
+    const d = data({ searchTerms: [term('kontener ar')], negatives: [{ campaignId: '10', text: 'konténer', match: 'BROAD' }] })
+    expect(rulesOf(d, rules({ alwaysNegative: ['konténer'] }))).toContain('always-negative')
+  })
+  it('a shared list attached to the campaign covers the term; a list of another campaign does not', () => {
+    const neg = { text: 'free', match: 'BROAD', level: 'list' as const, listId: '7', listName: 'Common' }
+    const on = data({ searchTerms: [term('free pickup')], negatives: [neg], negativeLists: [{ id: '7', name: 'Common', campaignIds: ['10'] }] })
+    const off = data({ searchTerms: [term('free pickup')], negatives: [neg], negativeLists: [{ id: '7', name: 'Common', campaignIds: ['99'] }] })
+    expect(rulesOf(on, rules({ alwaysNegative: ['free'] }))).not.toContain('always-negative')
+    expect(rulesOf(off, rules({ alwaysNegative: ['free'] }))).toContain('always-negative')
   })
   it('costly terms without conversions are review candidates (EXACT negatives), only with trusted tracking', () => {
     const f = analyze(data({ searchTerms: [term('drop off waste', { cost: 1500 }), term('cheap', { cost: 50 })] }), rules({ wasteThreshold: 1000 }))
@@ -111,6 +122,44 @@ describe('search terms', () => {
   it('with untrusted tracking, promotion is by clicks and says so', () => {
     const d = data({ campaigns: [camp({ conversions: 0 })], searchTerms: [term('service city', { clicks: 5 })] })
     expect(analyze(d, rules()).findings.find(x => x.rule === 'promote-to-exact')!.title).toMatch(/tracking unverified/)
+  })
+})
+
+describe('negatives', () => {
+  it('accented negatives without their unaccented twin → one add-negative per match type', () => {
+    const f = analyze(data({ negatives: [
+      { campaignId: '10', text: 'állás', match: 'BROAD' },
+      { campaignId: '10', text: 'bérlés', match: 'BROAD' },
+      { campaignId: '10', text: 'berles', match: 'BROAD' },
+      { campaignId: '10', text: 'sofőr állás', match: 'PHRASE' },
+      { campaignId: '10', text: 'konténer', match: 'EXACT' },
+    ] }), rules()).findings.find(x => x.rule === 'negative-missing-accent-variant')!
+    expect(f.title).toMatch(/^2 accented negative/)
+    expect(f.action).toBe('google-ads add-negative --campaign 10 --terms "allas" --match BROAD && google-ads add-negative --campaign 10 --terms "kontener" --match EXACT')
+  })
+  it('a twin in an attached shared list counts; lists are checked once, not per campaign', () => {
+    const d = data({
+      negatives: [
+        { campaignId: '10', text: 'állás', match: 'BROAD' },
+        { text: 'allas', match: 'BROAD', level: 'list', listId: '7', listName: 'Common' },
+        { text: 'munkás', match: 'BROAD', level: 'list', listId: '7', listName: 'Common' },
+      ],
+      negativeLists: [{ id: '7', name: 'Common', campaignIds: ['10'] }],
+    })
+    const found = analyze(d, rules()).findings.filter(x => x.rule === 'negative-missing-accent-variant')
+    expect(found).toHaveLength(1)
+    expect(found[0].action).toBe('google-ads add-negative --list 7 --terms "munkas" --match BROAD')
+  })
+  it('a negative that blocks an enabled keyword of the same campaign → high', () => {
+    const f = analyze(data({
+      existingKeywords: [
+        { adGroupId: '20', adGroup: 'Fuvar', campaignId: '10', text: 'furgon 1,5 tonnás', match: 'EXACT', serving: true },
+        { adGroupId: '20', adGroup: 'Fuvar', campaignId: '10', text: 'tonnás fuvar', match: 'EXACT', serving: false },
+      ],
+      negatives: [{ campaignId: '10', text: '5 tonnás', match: 'PHRASE' }],
+    }), rules()).findings.find(x => x.rule === 'negative-blocks-keyword')!
+    expect(f).toMatchObject({ severity: 'high', title: expect.stringMatching(/^1 enabled keyword/) })
+    expect(f.why).toContain('"furgon 1,5 tonnás" [EXACT] in "Fuvar" ← negative "5 tonnás" [PHRASE] (campaign)')
   })
 })
 

@@ -16,6 +16,19 @@ export function str(value: string): string {
   return `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
 }
 
+/**
+ * The last N finished days (ending yesterday) as an explicit range; GAQL has no LAST_60_DAYS.
+ * Local calendar days: close enough to the account time zone for windows this long.
+ */
+export function lastDaysClause(days: number, today = new Date()): string {
+  if (!Number.isInteger(days) || days < 1 || days > 365) throw new CliError(`--days must be 1–365, got ${days}`)
+  const day = (offset: number) => {
+    const d = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+  return `segments.date BETWEEN '${day(days)}' AND '${day(1)}'`
+}
+
 /** --days 1|7|14|30 → GAQL date clause (1 = yesterday, a full finished day; anything else → 30). */
 export function dateClause(days: number): string {
   if (days === 1) return 'segments.date DURING YESTERDAY'

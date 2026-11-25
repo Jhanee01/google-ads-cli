@@ -4,6 +4,7 @@
  */
 import { CliError } from './config.js'
 import { micros, toMicros } from './client.js'
+import { checkKeywordTexts, subsumes, withAccentVariants } from './negatives.js'
 
 export type Op = Record<string, unknown>
 export interface Mutation { endpoint: string; operations: Op[] }
@@ -22,28 +23,107 @@ export function matchType(v: string | undefined): MatchType {
   return m
 }
 
+/**
+ * Negatives for a campaign, or (with sharedSetResource) for a shared negative keyword list.
+ * Exact duplicates and terms an existing negative already covers are skipped with a warning.
+ * accentVariants adds the unaccented form of every accented term: Google treats them as two
+ * different negatives (knowledge/playbook/negatives.md).
+ */
 export function buildAddNegatives(input: {
-  campaignResource: string
+  campaignResource?: string
+  sharedSetResource?: string
   campaignName: string
   terms: string[]
   match: MatchType
   existing: Array<{ text: string; match: string }>
+  accentVariants?: boolean
 }): Change {
   const c = change()
+  const terms = input.accentVariants ? withAccentVariants(input.terms) : input.terms.map(t => t.trim().replace(/\s+/g, ' ')).filter(Boolean)
+  checkKeywordTexts(terms, 'negative keyword')
   const have = new Set(input.existing.map(e => `${e.text.toLowerCase()}|${e.match}`))
   const seen = new Set<string>()
   const ops: Op[] = []
-  for (const raw of input.terms) {
-    const text = raw.trim()
-    if (!text) continue
+  const where = input.sharedSetResource ? `negative list "${input.campaignName}"` : `campaign "${input.campaignName}"`
+  for (const text of terms) {
     const key = `${text.toLowerCase()}|${input.match}`
     if (have.has(key)) { c.warnings.push(`"${text}" [${input.match}] is already a negative, skipped`); continue }
+    const cover = input.existing.find(e => subsumes(e, { text, match: input.match }))
+    if (cover) { c.warnings.push(`"${text}" [${input.match}] is already covered by "${cover.text}" [${cover.match}], skipped`); continue }
     if (seen.has(key)) continue
     seen.add(key)
-    ops.push({ create: { campaign: input.campaignResource, negative: true, keyword: { text, matchType: input.match } } })
-    c.summary.push(`add negative "${text}" [${input.match}] to campaign "${input.campaignName}"`)
+    const keyword = { text, matchType: input.match }
+    ops.push(input.sharedSetResource
+      ? { create: { sharedSet: input.sharedSetResource, keyword } }
+      : { create: { campaign: input.campaignResource, negative: true, keyword } })
+    c.summary.push(`add negative "${text}" [${input.match}] to ${where}`)
   }
-  push(c, 'campaignCriteria:mutate', ops)
+  push(c, input.sharedSetResource ? 'sharedCriteria:mutate' : 'campaignCriteria:mutate', ops)
+  return c
+}
+
+/** A new shared negative keyword list with its keywords, optionally attached to campaigns: one atomic call. */
+export function buildCreateNegativeList(input: {
+  customerId: string
+  name: string
+  terms: string[]
+  match: MatchType
+  accentVariants?: boolean
+  existingNames: string[]
+  attach: Array<{ resourceName: string; name: string }>
+}): Change {
+  const c = change()
+  const name = input.name.trim()
+  if (!name) throw new CliError('--name is required')
+  if (input.existingNames.some(n => n.toLowerCase() === name.toLowerCase())) {
+    throw new CliError(`A negative keyword list named "${name}" already exists; add to it with: google-ads add-negative --list <id>`)
+  }
+  const terms = input.accentVariants ? withAccentVariants(input.terms) : input.terms.map(t => t.trim().replace(/\s+/g, ' ')).filter(Boolean)
+  if (!terms.length) throw new CliError('--terms is empty')
+  checkKeywordTexts(terms, 'negative keyword')
+  const list = `customers/${input.customerId}/sharedSets/-1`
+  const ops: Op[] = [{ sharedSetOperation: { create: { resourceName: list, name, type: 'NEGATIVE_KEYWORDS' } } }]
+  const seen = new Set<string>()
+  const added: string[] = []
+  for (const text of terms) {
+    if (seen.has(text.toLowerCase())) continue
+    seen.add(text.toLowerCase())
+    added.push(text)
+    ops.push({ sharedCriterionOperation: { create: { sharedSet: list, keyword: { text, matchType: input.match } } } })
+  }
+  c.summary.push(`create negative keyword list "${name}" with ${added.length} ${input.match} negatives: ${added.join(', ')}`)
+  for (const camp of input.attach) {
+    ops.push({ campaignSharedSetOperation: { create: { campaign: camp.resourceName, sharedSet: list } } })
+    c.summary.push(`attach it to campaign "${camp.name}"`)
+  }
+  if (!input.attach.length) c.warnings.push('The list is not attached to any campaign yet, so it blocks nothing: use --attach, or attach-negative-list later.')
+  c.mutations.push({ endpoint: 'googleAds:mutate', operations: ops })
+  return c
+}
+
+/** Attach a shared negative keyword list to campaigns, or detach it. */
+export function buildAttachNegativeList(input: {
+  customerId: string
+  list: { id: string; resourceName: string; name: string }
+  campaigns: Array<{ id: string; resourceName: string; name: string }>
+  attached: string[]
+  detach?: boolean
+}): Change {
+  const c = change()
+  const ops: Op[] = []
+  for (const camp of input.campaigns) {
+    const isOn = input.attached.includes(camp.id)
+    if (input.detach) {
+      if (!isOn) { c.warnings.push(`"${input.list.name}" is not attached to campaign "${camp.name}", skipped`); continue }
+      ops.push({ remove: `customers/${input.customerId}/campaignSharedSets/${camp.id}~${input.list.id}` })
+      c.summary.push(`detach negative keyword list "${input.list.name}" from campaign "${camp.name}"`)
+    } else {
+      if (isOn) { c.warnings.push(`"${input.list.name}" is already attached to campaign "${camp.name}", skipped`); continue }
+      ops.push({ create: { campaign: camp.resourceName, sharedSet: input.list.resourceName } })
+      c.summary.push(`attach negative keyword list "${input.list.name}" to campaign "${camp.name}"`)
+    }
+  }
+  push(c, 'campaignSharedSets:mutate', ops)
   return c
 }
 

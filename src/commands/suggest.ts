@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 import { search, micros, round2 } from '../client.js'
 import { dateClause } from '../gaql.js'
 import { AGE_RANGES } from '../builders.js'
-import { adGroupKeywords, listCampaigns } from '../state.js'
+import { adGroupKeywords, listCampaigns, negativeState } from '../state.js'
 import { analyze, loadRules, type SuggestData } from '../suggest.js'
 import { cidOf, out, qualityOf } from './read.js'
 
@@ -19,9 +19,11 @@ The agent should read the playbook page and the account's own knowledge base, th
 actions to propose to the human. Running an action only creates a plan.
 
 RULES: invalid-conversion-period, measurement-suspect, no-auction, smart-bidding-without-signal,
-  rank-lost, budget-limited, presence-or-interest, broad-phrase-share, always-negative,
-  wasted-search-terms, promote-to-exact, low-quality-score-spend, age-without-conversions,
-  anomaly-serving-stopped, anomaly-cost-spike, anomaly-weekly
+  rank-lost, budget-limited, presence-or-interest, broad-phrase-share, negative-missing-accent-variant,
+  negative-blocks-keyword, always-negative, wasted-search-terms, promote-to-exact, low-quality-score-spend,
+  age-without-conversions, anomaly-serving-stopped, anomaly-cost-spike, anomaly-weekly
+Negatives are matched the way Google matches them (campaign, ad group and attached shared lists;
+no close variants; accented ≠ unaccented): see knowledge/playbook/negatives.md.
 The anomaly rules always use the last 30 days, whatever --days is: yesterday against the 28 days
 before (serving stopped, cost spike), and the last 7 days against the average of the 3 weeks before.
 Thresholds and the always-negative words come from google-ads.rules.json (or --rules <file>);
@@ -64,11 +66,7 @@ EXAMPLES:
           cid,
         ),
         adGroupKeywords(undefined, cid),
-        search(
-          `SELECT campaign.id, campaign_criterion.keyword.text FROM campaign_criterion
-           WHERE campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = TRUE`,
-          cid,
-        ),
+        negativeState(cid),
         search(
           `SELECT campaign.id, ad_group.id, ad_group.name, ad_group_criterion.age_range.type, ad_group_criterion.negative,
                   metrics.cost_micros, metrics.clicks, metrics.conversions
@@ -119,7 +117,8 @@ EXAMPLES:
           clicks: Number(r.metrics?.clicks ?? 0), conversions: round2(r.metrics?.conversions),
         })),
         existingKeywords,
-        negatives: negatives.map(r => ({ campaignId: String(r.campaign?.id), text: r.campaignCriterion?.keyword?.text ?? '' })),
+        negatives: negatives.negatives,
+        negativeLists: negatives.lists,
         ages: ages.map(r => ({
           adGroupId: String(r.adGroup?.id), adGroup: r.adGroup?.name ?? '', campaignId: String(r.campaign?.id),
           age: AGE_LABEL[r.adGroupCriterion?.ageRange?.type] ?? String(r.adGroupCriterion?.ageRange?.type),

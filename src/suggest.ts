@@ -5,6 +5,24 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { CliError } from './config.js'
+import { keywordConflicts, missingAccentVariants, negativeBlocks, subsumes, type MissingVariant, type ScopedNegative } from './negatives.js'
+
+/** negative-missing-accent-variant: one finding per campaign or list, one plan command per match type. */
+function accentFinding(missing: MissingVariant[], target: string, campaign: string | undefined, where: string): Finding {
+  const byMatch = new Map<string, string[]>()
+  missing.forEach(m => byMatch.set(m.match, [...(byMatch.get(m.match) ?? []), m.variant]))
+  const quote = (s: string) => `"${s.replace(/"/g, '\\"')}"`
+  return {
+    rule: 'negative-missing-accent-variant',
+    severity: 'medium',
+    campaign,
+    title: `${missing.length} accented negative(s) ${where} have no unaccented twin`,
+    why: `Google treats an accented and an unaccented negative as two different keywords, and many people search without accents. ` +
+      `Missing: ${missing.slice(0, 15).map(m => `"${m.text}" → "${m.variant}"`).join(', ')}${missing.length > 15 ? `, and ${missing.length - 15} more` : ''}.`,
+    playbook: 'knowledge/playbook/negatives.md',
+    action: [...byMatch].map(([match, terms]) => `google-ads add-negative ${target} --terms ${quote(terms.join(','))} --match ${match}`).join(' && '),
+  }
+}
 
 export interface Rules {
   /** Date (YYYY-MM-DD) from which conversions were verified end to end. null = never: no conversion is trusted. */
@@ -114,8 +132,12 @@ export interface SuggestData {
   campaigns: CampaignData[]
   keywords: KeywordData[]
   searchTerms: TermData[]
-  existingKeywords: Array<{ adGroupId: string; text: string; match: string }>
-  negatives: Array<{ campaignId: string; text: string }>
+  /** campaignId / adGroup / serving: needed by negative-blocks-keyword (serving = keyword, ad group and campaign enabled) */
+  existingKeywords: Array<{ adGroupId: string; text: string; match: string; campaignId?: string; adGroup?: string; serving?: boolean }>
+  /** every negative: level defaults to campaign, match to BROAD */
+  negatives: Array<{ campaignId?: string; text: string; match?: string; level?: 'campaign' | 'adGroup' | 'list'; adGroupId?: string; listId?: string; listName?: string }>
+  /** shared negative keyword lists and the campaigns they are attached to */
+  negativeLists?: Array<{ id: string; name: string; campaignIds: string[] }>
   ages: AgeData[]
   /** Daily campaign metrics of the last 30 days (ending windowEnd = yesterday), for the anomaly rules. */
   daily?: DailyData[]
@@ -303,10 +325,53 @@ export function analyze(data: SuggestData, rules: Rules): { measurementTrusted: 
     })
   }
 
+  // --- negatives ------------------------------------------------------------------------------
+  // Matching follows Google's rules exactly (src/negatives.ts): no close variants, accents count.
+  const listCampaigns = new Map((data.negativeLists ?? []).map(l => [l.id, l.campaignIds]))
+  const scoped: ScopedNegative[] = data.negatives.map(n => ({ ...n, level: n.level ?? 'campaign', match: n.match ?? 'BROAD' }))
+  const appliesTo = (n: ScopedNegative, campaignId: string, adGroupId?: string) =>
+    n.level === 'campaign' ? n.campaignId === campaignId
+      : n.level === 'adGroup' ? adGroupId !== undefined && n.adGroupId === adGroupId
+        : (listCampaigns.get(n.listId ?? '') ?? []).includes(campaignId)
+  const enabledIds = new Set(data.campaigns.map(c => c.id))
+
+  for (const c of data.campaigns) {
+    const own = scoped.filter(n => n.level === 'campaign' && n.campaignId === c.id)
+    const fromLists = scoped.filter(n => n.level === 'list' && appliesTo(n, c.id))
+    const missing = missingAccentVariants(own).filter(m => !fromLists.some(l => subsumes(l, { text: m.variant, match: m.match })))
+    if (!missing.length) continue
+    add(accentFinding(missing, `--campaign ${c.id}`, c.name, `in campaign "${c.name}"`))
+  }
+  for (const l of data.negativeLists ?? []) {
+    if (!l.campaignIds.some(id => enabledIds.has(id))) continue
+    const missing = missingAccentVariants(scoped.filter(n => n.level === 'list' && n.listId === l.id))
+    if (missing.length) add(accentFinding(missing, `--list ${l.id}`, undefined, `in the negative keyword list "${l.name}"`))
+  }
+
+  const conflicts = keywordConflicts(
+    data.existingKeywords
+      .filter(k => k.campaignId && enabledIds.has(k.campaignId))
+      .map(k => ({ text: k.text, match: k.match, status: k.serving === false ? 'PAUSED' : 'ENABLED', campaignId: k.campaignId!, adGroupId: k.adGroupId, adGroup: k.adGroup })),
+    scoped,
+    Object.fromEntries(listCampaigns),
+  )
+  const conflictsByCampaign = new Map<string, typeof conflicts>()
+  conflicts.forEach(x => conflictsByCampaign.set(x.keyword.campaignId, [...(conflictsByCampaign.get(x.keyword.campaignId) ?? []), x]))
+  for (const [cid, list] of conflictsByCampaign) {
+    const where = (n: ScopedNegative) => n.level === 'list' ? `list "${n.listName}"` : n.level === 'adGroup' ? 'ad group' : 'campaign'
+    add({
+      rule: 'negative-blocks-keyword',
+      severity: 'high',
+      campaign: byId.get(cid)?.name,
+      title: `${list.length} enabled keyword(s) blocked by a negative of their own campaign`,
+      why: list.slice(0, 10).map(x => `"${x.keyword.text}" [${x.keyword.match}]${x.keyword.adGroup ? ` in "${x.keyword.adGroup}"` : ''} ← negative "${x.negative.text}" [${x.negative.match}] (${where(x.negative)})`).join('; ') +
+        '. The keyword cannot show for its own search. Narrow the negative (EXACT, or a longer phrase) or remove it in the UI; if the keyword is unwanted, pause it.',
+      playbook: 'knowledge/playbook/negatives.md',
+    })
+  }
+
   // --- search terms -------------------------------------------------------------------------
-  const negByCampaign = new Map<string, string[]>()
-  data.negatives.forEach(n => negByCampaign.set(n.campaignId, [...(negByCampaign.get(n.campaignId) ?? []), n.text]))
-  const covered = (t: TermData) => (negByCampaign.get(t.campaignId) ?? []).some(n => containsWord(t.term, n))
+  const covered = (t: TermData) => scoped.some(n => appliesTo(n, t.campaignId, t.adGroupId) && negativeBlocks(n, t.term))
   const open = data.searchTerms.filter(t => !t.status.includes('EXCLUDED') && !covered(t))
 
   const alwaysHits = new Map<string, { words: Set<string>; cost: number; examples: string[] }>()
@@ -325,9 +390,10 @@ export function analyze(data: SuggestData, rules: Rules): { measurementTrusted: 
       severity: 'high',
       campaign: byId.get(cid)?.name,
       title: `Search terms with always-negative words are still getting through`,
-      why: `${money(hit.cost)} spent on e.g. ${hit.examples.map(e => `"${e}"`).join(', ')}. One broad negative word blocks the variants.`,
+      why: `${money(hit.cost)} spent on e.g. ${hit.examples.map(e => `"${e}"`).join(', ')}. One broad negative word blocks the searches ` +
+        'that contain it; plural and suffixed forms need their own negative, and so does the unaccented form (added by --with-accent-variants).',
       playbook: 'knowledge/playbook/negatives.md',
-      action: `google-ads add-negative --campaign ${cid} --terms ${q([...hit.words].join(','))} --match BROAD`,
+      action: `google-ads add-negative --campaign ${cid} --terms ${q([...hit.words].join(','))} --match BROAD --with-accent-variants`,
     })
   }
 
