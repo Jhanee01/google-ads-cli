@@ -19,7 +19,7 @@ export function buildProgram(): Command {
 
 READ commands return JSON and never change anything.
 WRITE commands (add-negative, create-negative-list, attach-negative-list, add-keyword, pause-keyword,
-set-budget, set-bidding, set-age, set-location, create-campaign, set-campaign-status) only
+set-budget, set-bidding, set-age, set-location, create-campaign, set-campaign-status, set-campaign-assets) only
 write a PLAN: the change is validated by the API (validateOnly) and saved to a file. Nothing changes
 until a human runs "google-ads apply <plan> --yes". Every apply is appended to an audit log.
 
@@ -56,6 +56,7 @@ QUICK REFERENCE:
   set-location    PLAN  add / exclude / remove locations, presence vs interest
   create-campaign PLAN  new Search campaigns from a JSON spec (created PAUSED)
   set-campaign-status PLAN  start (--enable) or pause (--pause) campaigns
+  set-campaign-assets PLAN  link / unlink assets of a campaign, create sitelinks
   apply           HUMAN applies a plan
   auth            HUMAN gets a new refresh token into .env`)
     .option('--deny <commands>', 'extra comma-separated denied commands (added to DENY_COMMANDS)', '')

@@ -15,7 +15,8 @@ import {
 } from '../state.js'
 import { cidOf, out } from './read.js'
 import { readFileSync } from 'node:fs'
-import { buildCampaignStatus, buildCreateCampaigns, type CreateSpec } from '../campaign.js'
+import { buildCampaignAssets, buildCampaignStatus, buildCreateCampaigns, parseSitelink, type CreateSpec } from '../campaign.js'
+import { search } from '../client.js'
 
 const SMART_BIDDING = new Set(['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS'])
 
@@ -315,6 +316,48 @@ EXAMPLES:
       )
       const command = { ENABLED: 'enable-campaign', PAUSED: 'pause-campaign', REMOVED: 'remove-campaign' }[status]
       await propose(cmd, command, change, camps.map(c => ({ campaign: c.name, status: c.status })))
+    })
+
+  withPlanOptions(program.command('set-campaign-assets').description(`Plan: link / unlink assets (sitelinks, callouts, call, image...) of a campaign.${PLAN_NOTE}
+
+--link     existing asset IDs (e.g. the sitelinks and callouts of another campaign); the field
+           type comes from the asset itself. Already linked ones are skipped.
+--unlink   asset IDs linked to this campaign (the asset itself stays in the account).
+--sitelink "Text=https://…"  create a new sitelink and link it (repeatable).
+All in one atomic call.
+
+EXAMPLES:
+  google-ads set-campaign-assets --campaign 123 --link 111,222 --unlink 333
+  google-ads set-campaign-assets --campaign 123 --sitelink "Get a quote=https://example.com/#contact"`))
+    .requiredOption('--campaign <id>', 'campaign ID')
+    .option('--link <ids>', 'comma-separated asset IDs to link')
+    .option('--unlink <ids>', 'comma-separated asset IDs to unlink')
+    .option('--sitelink <text=url>', 'new sitelink (repeatable)', (v: string, all: string[]) => [...all, v], [] as string[])
+    .action(async (_, cmd) => {
+      const o = cmd.opts()
+      const cid = cidOf(cmd)
+      const linkIds = ids(o.link, 'asset ID')
+      const unlink = ids(o.unlink, 'asset ID')
+      const sitelinks = (o.sitelink as string[]).map(parseSitelink)
+      if (!linkIds.length && !unlink.length && !sitelinks.length) throw new CliError('Give --link, --unlink or --sitelink')
+      const camp = await getCampaign(o.campaign, cid)
+      const linkedRows = await search(
+        `SELECT campaign.id, campaign_asset.resource_name, campaign_asset.field_type, asset.id FROM campaign_asset
+         WHERE campaign.id = ${camp.id} AND campaign_asset.status != 'REMOVED'`, cid)
+      const linked = linkedRows.map(r => ({ resourceName: r.campaignAsset.resourceName, assetId: String(r.asset.id), fieldType: r.campaignAsset.fieldType }))
+      const assetRows = linkIds.length ? await search(
+        `SELECT asset.id, asset.type, asset.name, asset.sitelink_asset.link_text, asset.callout_asset.callout_text, asset.call_asset.phone_number
+         FROM asset WHERE asset.id IN (${linkIds.join(',')})`, cid) : []
+      const byId = new Map(assetRows.map(r => [String(r.asset.id), r.asset]))
+      const link = linkIds.map(id => {
+        const a = byId.get(id)
+        if (!a) throw new CliError(`Asset ${id} not found in the account.`)
+        return { assetId: id, type: a.type, label: a.sitelinkAsset?.linkText ?? a.calloutAsset?.calloutText ?? a.callAsset?.phoneNumber ?? a.name ?? '' }
+      })
+      const change = buildCampaignAssets({
+        customerId: resolveCustomerId(cid), campaignResource: camp.resourceName, campaignName: camp.name, linked, link, unlink, sitelinks,
+      })
+      await propose(cmd, 'set-campaign-assets', change, { campaign: camp.name, linked })
     })
 
   program.command('apply').description(`Apply a plan created by a write command. THIS CHANGES THE ACCOUNT.

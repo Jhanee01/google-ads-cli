@@ -143,6 +143,58 @@ export function buildCampaignStatus(
   return c
 }
 
+const LINKABLE = new Set(['SITELINK', 'CALLOUT', 'CALL', 'STRUCTURED_SNIPPET', 'PRICE', 'PROMOTION', 'AD_IMAGE', 'BUSINESS_NAME', 'BUSINESS_LOGO', 'LEAD_FORM'])
+
+/** Link existing assets to a campaign, unlink linked ones, and create + link new sitelinks. One atomic call. */
+export function buildCampaignAssets(input: {
+  customerId: string
+  campaignResource: string
+  campaignName: string
+  linked: Array<{ resourceName: string; assetId: string; fieldType: string }>
+  link: Array<{ assetId: string; type: string; label: string }>
+  unlink: string[]
+  sitelinks: SitelinkSpec[]
+}): Change {
+  const c: Change = { summary: [], warnings: [], mutations: [] }
+  const ops: Op[] = []
+  const base = `customers/${input.customerId}`
+  const isLinked = (id: string, field: string) => input.linked.some(l => l.assetId === id && l.fieldType === field)
+  for (const id of input.unlink) {
+    const hits = input.linked.filter(l => l.assetId === id)
+    if (!hits.length) throw new CliError(`Asset ${id} is not linked to campaign "${input.campaignName}".`)
+    for (const h of hits) {
+      ops.push({ campaignAssetOperation: { remove: h.resourceName } })
+      c.summary.push(`unlink ${h.fieldType} asset ${id} from campaign "${input.campaignName}"`)
+    }
+  }
+  for (const a of input.link) {
+    if (!LINKABLE.has(a.type)) throw new CliError(`Asset ${a.assetId} is a ${a.type} asset, which cannot be linked to a campaign here.`)
+    if (isLinked(a.assetId, a.type)) { c.warnings.push(`${a.type} asset ${a.assetId} (${a.label}) is already linked, skipped`); continue }
+    ops.push({ campaignAssetOperation: { create: { campaign: input.campaignResource, asset: `${base}/assets/${a.assetId}`, fieldType: a.type } } })
+    c.summary.push(`link ${a.type} asset ${a.assetId} (${a.label}) to campaign "${input.campaignName}"`)
+  }
+  let next = -1
+  for (const s of input.sitelinks) {
+    check(len(s.text) >= 1 && len(s.text) <= 25, `sitelink text "${s.text}" must be 1–25 characters`)
+    url(s.url, `sitelink "${s.text}" url`)
+    const rn = `${base}/assets/${next--}`
+    ops.push({ assetOperation: { create: { resourceName: rn, finalUrls: [s.url], sitelinkAsset: { linkText: s.text } } } })
+    ops.push({ campaignAssetOperation: { create: { campaign: input.campaignResource, asset: rn, fieldType: 'SITELINK' } } })
+    c.summary.push(`create sitelink "${s.text}" → ${s.url} and link it to campaign "${input.campaignName}"`)
+  }
+  // Removes first, so an unlink + link of the same asset in one call works.
+  ops.sort((a, b) => Number(Boolean((b as any).campaignAssetOperation?.remove)) - Number(Boolean((a as any).campaignAssetOperation?.remove)))
+  if (ops.length) c.mutations.push({ endpoint: 'googleAds:mutate', operations: ops })
+  return c
+}
+
+/** "Text=https://…" → sitelink. */
+export function parseSitelink(v: string): SitelinkSpec {
+  const i = v.indexOf('=')
+  if (i < 1) throw new CliError(`--sitelink looks like "Prices=https://example.com/prices", got "${v}"`)
+  return { text: v.slice(0, i).trim(), url: v.slice(i + 1).trim() }
+}
+
 export function buildCreateCampaigns(customerId: string, spec: CreateSpec, existingCampaignNames: string[]): Change {
   validateSpec(spec, existingCampaignNames)
   const conflicts = spec.campaigns.flatMap(negativeConflicts)
