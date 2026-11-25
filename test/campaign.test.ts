@@ -103,3 +103,24 @@ describe('set-campaign-status --remove', () => {
     expect(buildCampaignStatus(running, 'REMOVED', true).mutations[0].operations).toEqual([{ remove: 'customers/1/campaigns/2' }])
   })
 })
+
+describe('set-campaign-assets', () => {
+  it('unlinks first, links new assets, skips linked ones and creates sitelinks', async () => {
+    const { buildCampaignAssets, parseSitelink } = await import('../src/campaign.js')
+    const c = buildCampaignAssets({
+      customerId: '1', campaignResource: 'customers/1/campaigns/9', campaignName: 'C',
+      linked: [{ resourceName: 'customers/1/campaignAssets/9~5~AD_IMAGE', assetId: '5', fieldType: 'AD_IMAGE' }, { resourceName: 'r', assetId: '7', fieldType: 'CALL' }],
+      link: [{ assetId: '6', type: 'CALLOUT', label: '24/7' }, { assetId: '7', type: 'CALL', label: 'phone' }],
+      unlink: ['5'],
+      sitelinks: [parseSitelink('Quote=https://x.hu/#k')],
+    })
+    const ops = c.mutations[0].operations as any[]
+    expect(ops[0]).toEqual({ campaignAssetOperation: { remove: 'customers/1/campaignAssets/9~5~AD_IMAGE' } })
+    expect(ops[1].campaignAssetOperation.create).toEqual({ campaign: 'customers/1/campaigns/9', asset: 'customers/1/assets/6', fieldType: 'CALLOUT' })
+    expect(ops[2].assetOperation.create.sitelinkAsset).toEqual({ linkText: 'Quote' })
+    expect(ops[3].campaignAssetOperation.create.asset).toBe('customers/1/assets/-1')
+    expect(c.warnings[0]).toMatch(/already linked/)
+    expect(() => buildCampaignAssets({ customerId: '1', campaignResource: 'x', campaignName: 'C', linked: [], link: [], unlink: ['5'], sitelinks: [] })).toThrow(/not linked/)
+    expect(() => parseSitelink('no url')).toThrow(/looks like/)
+  })
+})

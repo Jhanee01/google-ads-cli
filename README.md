@@ -84,6 +84,7 @@ Three layers, each doing what it is good at:
 | `set-age --ad-group --exclude 18-24,65+ / --include / --bid-adjust 35-44:+20` | age targeting |
 | `set-location --campaign --add / --exclude / --remove <geo IDs> [--presence-only]` | location targeting |
 | `set-campaign-status --campaign 123,456 --enable \| --pause \| --remove [--force]` | start, pause or permanently remove whole campaigns (a running one is removed only with `--force`) |
+| `set-campaign-assets --campaign 123 [--link ids] [--unlink ids] [--sitelink "Text=https://…"]` | link or unlink existing assets (sitelinks, callouts, call, images…) and create new sitelinks, in one atomic call |
 | `create-campaign --spec new-campaigns.json` | new Search campaigns from a JSON spec, created **PAUSED** (see below) |
 
 ### `create-campaign`: new Search campaigns from a spec
