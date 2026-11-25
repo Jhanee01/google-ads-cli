@@ -62,12 +62,12 @@ describe('create-campaign', () => {
     expect(() => buildCreateCampaigns('1', { campaigns: [camp({ geoIds: [] })] }, [])).toThrow(/whole world/)
     expect(() => buildCreateCampaigns('1', { campaigns: [camp({ maxCpc: 0 })] }, [])).toThrow(/maxCpc/)
     const long = camp()
-    long.adGroups[0].ad.headlines = ['x'.repeat(31), 'a', 'b']
+    long.adGroups[0].ad!.headlines = ['x'.repeat(31), 'a', 'b']
     expect(() => buildCreateCampaigns('1', { campaigns: [long] }, [])).toThrow(/max 30/)
     expect(() => buildCreateCampaigns('1', { campaigns: [camp({ callouts: ['x'.repeat(26)] })] }, [])).toThrow(/1–25/)
     // Hungarian accents count as one character
     const hu = camp()
-    hu.adGroups[0].ad.headlines = ['Árvíztűrő tükörfúrógép óbb', 'a', 'b']
+    hu.adGroups[0].ad!.headlines = ['Árvíztűrő tükörfúrógép óbb', 'a', 'b']
     expect(() => buildCreateCampaigns('1', { campaigns: [hu] }, [])).not.toThrow()
   })
 

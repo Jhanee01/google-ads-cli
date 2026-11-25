@@ -6,13 +6,25 @@
 import { CliError } from './config.js'
 import { toMicros } from './client.js'
 import { matchType, type Change, type MatchType, type Op } from './builders.js'
+import { duplicateAdsAcrossGroups, keywordCoverage, lintAdGroup, lintAssets, lintKeywords, type AdText, type Issue, type Snippet } from './adcopy.js'
+import { checkKeywordTexts, missingAccentVariants, negativeBlocks, withAccentVariants } from './negatives.js'
 
 export interface PinnedText { text: string; pin?: 1 | 2 | 3 }
+export interface AdSpec {
+  finalUrl: string
+  path1?: string
+  path2?: string
+  headlines: Array<string | PinnedText>
+  descriptions: Array<string | { text: string; pin?: 1 | 2 }>
+}
 export interface AdGroupSpec {
   name: string
   keywords: string[]
   match?: string
-  ad: { finalUrl: string; path1?: string; path2?: string; headlines: Array<string | PinnedText>; descriptions: string[] }
+  /** one RSA (older specs) … */
+  ad?: AdSpec
+  /** … or several: Google recommends 2 per ad group */
+  ads?: AdSpec[]
 }
 export interface SitelinkSpec { text: string; url: string; description1?: string; description2?: string }
 export interface CampaignSpec {
@@ -24,8 +36,35 @@ export interface CampaignSpec {
   callAssetId?: string
   sitelinks?: SitelinkSpec[]
   callouts?: string[]
+  /** structured snippets, e.g. { "header": "Service catalog", "values": ["Moving", "Transport", "Waste removal"] } */
+  snippets?: Snippet[]
   negatives?: Array<{ text: string; match?: string }>
+  /** add the unaccented twin of every accented negative (Google treats them as two keywords) */
+  negativeAccentVariants?: boolean
   adGroups: AdGroupSpec[]
+}
+
+/** The ads of an ad group, whichever way the spec lists them. */
+export const adsOf = (ag: AdGroupSpec): AdSpec[] => [...(ag.ad ? [ag.ad] : []), ...(ag.ads ?? [])]
+
+/** Spec ad → the shape the checks use. */
+export function adText(a: AdSpec): AdText {
+  return {
+    finalUrl: a.finalUrl, path1: a.path1, path2: a.path2,
+    headlines: (a.headlines ?? []).map(h => (typeof h === 'string' ? { text: h } : { text: h.text, pin: h.pin })),
+    descriptions: (a.descriptions ?? []).map(d => (typeof d === 'string' ? { text: d } : { text: d.text, pin: d.pin })),
+  }
+}
+
+/** The campaign's negatives as they will be created (with accent twins when asked). */
+export function specNegatives(c: CampaignSpec): Array<{ text: string; match: MatchType }> {
+  const out: Array<{ text: string; match: MatchType }> = []
+  for (const n of c.negatives ?? []) {
+    const match = matchType(n.match ?? 'BROAD')
+    const texts = c.negativeAccentVariants ? withAccentVariants([n.text]) : [n.text.trim()]
+    for (const text of texts) out.push({ text, match })
+  }
+  return out
 }
 export interface CreateSpec { campaigns: CampaignSpec[] }
 
@@ -63,53 +102,87 @@ export function validateSpec(spec: CreateSpec, existingCampaignNames: string[]):
       check((s.description1 === undefined) === (s.description2 === undefined), `${where}: sitelink "${s.text}" needs both descriptions or neither`)
     }
     for (const t of c.callouts ?? []) check(len(t) >= 1 && len(t) <= 25, `${where}: callout "${t}" must be 1–25 characters`)
+    const assetErrors = lintAssets({ sitelinks: [], callouts: [], snippets: c.snippets ?? [], headlines: [] }, where).filter(i => i.level === 'error')
+    check(!assetErrors.length, assetErrors.map(e => e.message).join('; '))
     for (const n of c.negatives ?? []) { matchType(n.match ?? 'BROAD'); check(Boolean(n.text?.trim()), `${where}: empty negative`) }
+    checkKeywordTexts((c.negatives ?? []).map(n => n.text.trim()), 'negative keyword')
     check(c.adGroups?.length > 0, `${where}: needs at least one ad group`)
     for (const ag of c.adGroups) {
       const w = `${where} › ad group "${ag.name}"`
       check(Boolean(ag.name?.trim()), `${where}: an ad group has no name`)
       check(ag.keywords?.length > 0, `${w}: no keywords`)
-      for (const k of ag.keywords) {
-        const t = k.trim().replace(/\s+/g, ' ')
-        check(t.split(' ').length <= 10 && len(t) <= 80, `${w}: keyword too long: "${k}"`)
-      }
+      checkKeywordTexts(ag.keywords.map(k => k.trim().replace(/\s+/g, ' ')), 'keyword')
       matchType(ag.match ?? 'EXACT')
-      const a = ag.ad
-      url(a?.finalUrl, `${w}: finalUrl`)
-      check(a.headlines?.length >= 3 && a.headlines.length <= 15, `${w}: an RSA needs 3–15 headlines, got ${a.headlines?.length ?? 0}`)
-      check(a.descriptions?.length >= 2 && a.descriptions.length <= 4, `${w}: an RSA needs 2–4 descriptions, got ${a.descriptions?.length ?? 0}`)
-      const seen = new Set<string>()
-      for (const h of a.headlines) {
-        const text = typeof h === 'string' ? h : h.text
-        check(len(text) >= 1 && len(text) <= 30, `${w}: headline "${text}" is ${len(text)} characters (max 30)`)
-        check(!seen.has(text.toLowerCase()), `${w}: duplicate headline "${text}"`)
-        seen.add(text.toLowerCase())
-        if (typeof h !== 'string' && h.pin !== undefined) check(h.pin in PIN, `${w}: pin must be 1, 2 or 3`)
-      }
-      for (const d of a.descriptions) check(len(d) >= 1 && len(d) <= 90, `${w}: description is ${len(d)} characters (max 90): "${d}"`)
-      for (const p of [a.path1, a.path2]) if (p !== undefined) check(len(p) <= 15 && !/\s|\//.test(p), `${w}: display path "${p}" must be ≤15 characters, no spaces or slashes`)
-      check(!(a.path2 && !a.path1), `${w}: path2 needs path1`)
+      const ads = adsOf(ag)
+      check(ads.length > 0, `${w}: needs an "ad" (or "ads")`)
+      for (const a of ads) url(a?.finalUrl, `${w}: finalUrl`)
+      const adErrors = lintAdGroup(ads.map(adText), ag.keywords, w).filter(i => i.level === 'error')
+      check(!adErrors.length, adErrors.map(e => e.message).join('; '))
     }
   }
 }
 
-const words = (s: string) => s.toLowerCase().split(/\s+/).filter(Boolean)
-
-/** Negatives that would block one of the campaign's own keywords (broad: all words; phrase: the words in order; exact: same text). */
+/** Negatives that would block one of the campaign's own keywords, matched as Google matches them (src/negatives.ts). */
 export function negativeConflicts(c: CampaignSpec): string[] {
   const out: string[] = []
   const kws = c.adGroups.flatMap(ag => ag.keywords.map(k => k.trim().replace(/\s+/g, ' ')))
-  for (const n of c.negatives ?? []) {
-    const m = matchType(n.match ?? 'BROAD')
-    const nw = words(n.text)
-    for (const k of kws) {
-      const kw = words(k)
-      const hit = m === 'EXACT' ? nw.join(' ') === kw.join(' ')
-        : m === 'PHRASE' ? (' ' + kw.join(' ') + ' ').includes(' ' + nw.join(' ') + ' ')
-        : nw.every(w => kw.includes(w))
-      if (hit) out.push(`negative "${n.text}" [${m}] blocks keyword "${k}" in campaign "${c.name}"`)
-    }
+  for (const n of specNegatives(c)) {
+    for (const k of kws) if (negativeBlocks(n, k)) out.push(`negative "${n.text}" [${n.match}] blocks keyword "${k}" in campaign "${c.name}"`)
   }
+  return out
+}
+
+export interface SpecCheck {
+  ok: boolean
+  errors: string[]
+  warnings: Issue[]
+  /** per ad group: which keywords are inside a headline of at least one of its ads */
+  coverage: Array<{ campaign: string; adGroup: string; keywords: number; inHeadline: number; missing: string[] }>
+}
+
+/**
+ * Everything create-campaign checks, without the API: the hard limits (errors: nothing would be
+ * uploaded) and the playbook recommendations (warnings) for the ads, assets, keywords and negatives.
+ */
+export function checkSpec(spec: CreateSpec, existingCampaignNames: string[] = []): SpecCheck {
+  const out: SpecCheck = { ok: true, errors: [], warnings: [], coverage: [] }
+  try {
+    validateSpec(spec, existingCampaignNames)
+  } catch (e) {
+    out.errors.push(...(e as Error).message.split('; '))
+  }
+  if (!Array.isArray(spec?.campaigns)) return { ...out, ok: false }
+  for (const c of spec.campaigns) {
+    if (!Array.isArray(c.adGroups) || c.adGroups.some(ag => !Array.isArray(ag.keywords))) continue
+    try { out.errors.push(...negativeConflicts(c)) } catch (e) { out.errors.push((e as Error).message) }
+    const where = `campaign "${c.name}"`
+    const groups = c.adGroups.map(ag => ({ name: ag.name, ads: adsOf(ag).map(adText), keywords: ag.keywords }))
+    for (const g of groups) {
+      out.warnings.push(...lintAdGroup(g.ads, g.keywords, `${where} › ad group "${g.name}"`).filter(i => i.level === 'warning'))
+      const covered = new Set(g.ads.flatMap(a => keywordCoverage(g.keywords, a).covered.map(k => k.toLowerCase())))
+      const all = [...new Set(g.keywords.map(k => k.trim().replace(/\s+/g, ' ')).filter(k => [...k].length <= 30))]
+      out.coverage.push({ campaign: c.name, adGroup: g.name, keywords: all.length, inHeadline: all.filter(k => covered.has(k.toLowerCase())).length,
+        missing: all.filter(k => !covered.has(k.toLowerCase())) })
+    }
+    out.warnings.push(...duplicateAdsAcrossGroups(groups).map(i => ({ ...i, message: `${where}: ${i.message}` })))
+    out.warnings.push(...lintAssets({
+      sitelinks: c.sitelinks ?? [], callouts: c.callouts ?? [], snippets: c.snippets ?? [],
+      headlines: groups.flatMap(g => g.ads.flatMap(a => a.headlines.map(h => h.text))),
+    }, where).filter(i => i.level === 'warning'))
+    if (!c.callAssetId) out.warnings.push({ level: 'warning', code: 'no-call-asset', message: `${where}: no call asset (callAssetId): when calls are the goal, the phone number is the main conversion path` })
+    try {
+      const missing = missingAccentVariants(specNegatives(c))
+      if (missing.length) {
+        out.warnings.push({ level: 'warning', code: 'negative-missing-accent-variant', message: `${where}: ${missing.length} accented negative(s) without their unaccented twin ` +
+          `(${missing.slice(0, 10).map(m => `"${m.text}" → "${m.variant}"`).join(', ')}${missing.length > 10 ? '…' : ''}): set "negativeAccentVariants": true` })
+      }
+    } catch { /* an invalid match type is already an error */ }
+  }
+  out.warnings.push(...lintKeywords(spec.campaigns.filter(c => Array.isArray(c.adGroups)).map(c => ({
+    name: c.name, adGroups: c.adGroups.map(ag => ({ name: ag.name, keywords: ag.keywords ?? [] })),
+  }))))
+  out.errors = [...new Set(out.errors)]
+  out.ok = out.errors.length === 0
   return out
 }
 
@@ -195,10 +268,25 @@ export function parseSitelink(v: string): SitelinkSpec {
   return { text: v.slice(0, i).trim(), url: v.slice(i + 1).trim() }
 }
 
+/** A spec ad → the API's ad body. */
+export function rsa(a: AdSpec): Record<string, unknown> {
+  const t = adText(a)
+  return {
+    finalUrls: [a.finalUrl],
+    responsiveSearchAd: {
+      headlines: t.headlines.map(h => ({ text: h.text, ...(h.pin ? { pinnedField: PIN[h.pin] } : {}) })),
+      descriptions: t.descriptions.map(d => ({ text: d.text, ...(d.pin ? { pinnedField: `DESCRIPTION_${d.pin}` } : {}) })),
+      ...(a.path1 ? { path1: a.path1 } : {}),
+      ...(a.path2 ? { path2: a.path2 } : {}),
+    },
+  }
+}
+
 export function buildCreateCampaigns(customerId: string, spec: CreateSpec, existingCampaignNames: string[]): Change {
   validateSpec(spec, existingCampaignNames)
   const conflicts = spec.campaigns.flatMap(negativeConflicts)
   if (conflicts.length) throw new CliError(`Conflicting negatives: ${conflicts.join('; ')}`)
+  const checked = checkSpec(spec, existingCampaignNames)
 
   const base = `customers/${customerId}`
   let next = -1
@@ -245,9 +333,9 @@ export function buildCreateCampaigns(customerId: string, spec: CreateSpec, exist
     summary.push(`  locations ${c.geoIds.join(', ')}; languages ${c.languageIds.join(', ')}`)
 
     const negSeen = new Set<string>()
-    for (const n of c.negatives ?? []) {
-      const m: MatchType = matchType(n.match ?? 'BROAD')
-      const text = n.text.trim()
+    for (const n of specNegatives(c)) {
+      const m: MatchType = n.match
+      const text = n.text
       const key = `${text.toLowerCase()}|${m}`
       if (negSeen.has(key)) { warnings.push(`duplicate negative "${text}" [${m}] in "${c.name}" skipped`); continue }
       negSeen.add(key)
@@ -267,22 +355,13 @@ export function buildCreateCampaigns(customerId: string, spec: CreateSpec, exist
         ops.push({ adGroupCriterionOperation: { create: { adGroup: agRn, status: 'ENABLED', keyword: { text, matchType: m } } } })
       }
       if (m !== 'EXACT') warnings.push(`"${ag.name}" uses ${m} keywords: they can spend fast on a small budget.`)
-      const a = ag.ad
-      ops.push({ adGroupAdOperation: { create: {
-        adGroup: agRn,
-        status: 'ENABLED',
-        ad: {
-          finalUrls: [a.finalUrl],
-          responsiveSearchAd: {
-            headlines: a.headlines.map(h => typeof h === 'string' ? { text: h } : { text: h.text, ...(h.pin ? { pinnedField: PIN[h.pin] } : {}) }),
-            descriptions: a.descriptions.map(text => ({ text })),
-            ...(a.path1 ? { path1: a.path1 } : {}),
-            ...(a.path2 ? { path2: a.path2 } : {}),
-          },
-        },
-      } } })
-      const pins = a.headlines.filter(h => typeof h !== 'string' && h.pin).map(h => `"${(h as PinnedText).text}" → ${(h as PinnedText).pin}.`)
-      summary.push(`  ad group "${ag.name}": ${kwSeen.size} ${m} keywords; RSA ${a.headlines.length} headlines / ${a.descriptions.length} descriptions → ${a.finalUrl}${pins.length ? `; pinned ${pins.join(', ')}` : ''}`)
+      const ads = adsOf(ag)
+      for (const a of ads) {
+        ops.push({ adGroupAdOperation: { create: { adGroup: agRn, status: 'ENABLED', ad: rsa(a) } } })
+        const pins = adText(a).headlines.filter(h => h.pin).map(h => `"${h.text}" → ${h.pin}.`)
+        summary.push(`  ad group "${ag.name}": RSA ${a.headlines.length} headlines / ${a.descriptions.length} descriptions → ${a.finalUrl}${pins.length ? `; pinned ${pins.join(', ')}` : ''}`)
+      }
+      summary.push(`  ad group "${ag.name}": ${kwSeen.size} ${m} keywords, ${ads.length} RSA`)
     }
 
     if (c.callAssetId) {
@@ -298,12 +377,18 @@ export function buildCreateCampaigns(customerId: string, spec: CreateSpec, exist
       const rn = asset(`callout|${t}`, { calloutAsset: { calloutText: t } })
       linkOps.push({ campaignAssetOperation: { create: { campaign: camp, asset: rn, fieldType: 'CALLOUT' } } })
     }
+    for (const sn of c.snippets ?? []) {
+      const rn = asset(`snippet|${sn.header}|${sn.values.join('|')}`, { structuredSnippetAsset: { header: sn.header, values: sn.values } })
+      linkOps.push({ campaignAssetOperation: { create: { campaign: camp, asset: rn, fieldType: 'STRUCTURED_SNIPPET' } } })
+    }
     if (c.sitelinks?.length) summary.push(`  sitelinks: ${c.sitelinks.map(s => `${s.text} → ${s.url}`).join(' · ')}`)
     if (c.callouts?.length) summary.push(`  callouts: ${c.callouts.join(' · ')}`)
+    if (c.snippets?.length) summary.push(`  structured snippets: ${c.snippets.map(sn => `${sn.header}: ${sn.values.join(', ')}`).join(' · ')}`)
     if ((c.sitelinks?.length ?? 0) > 0 && (c.sitelinks?.length ?? 0) < 2) warnings.push(`"${c.name}": sitelinks show only with at least 2.`)
   }
 
-  if (assetOps.length) summary.push(`create ${assetOps.length} new sitelink / callout assets (shared where identical)`)
+  if (assetOps.length) summary.push(`create ${assetOps.length} new sitelink / callout / snippet assets (shared where identical)`)
+  warnings.push(...checked.warnings.map(w => `[${w.code}] ${w.message}`))
   warnings.push('The campaigns are created PAUSED. Starting them is a separate decision.')
   return { summary, warnings, mutations: [{ endpoint: 'googleAds:mutate', operations: [...ops, ...assetOps, ...linkOps] }] }
 }

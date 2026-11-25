@@ -5,6 +5,7 @@ import { registerWrite } from './commands/write.js'
 import { registerAuth } from './commands/auth.js'
 import { registerSuggest } from './commands/suggest.js'
 import { registerNegatives } from './commands/negatives.js'
+import { registerAds } from './commands/ads.js'
 
 /** Exact command names, or a prefix ending in "*" (e.g. "set-*"). */
 export function isDenied(command: string, deny: string[]): string | undefined {
@@ -19,7 +20,8 @@ export function buildProgram(): Command {
 
 READ commands return JSON and never change anything.
 WRITE commands (add-negative, create-negative-list, attach-negative-list, add-keyword, pause-keyword,
-set-budget, set-bidding, set-age, set-location, create-campaign, set-campaign-status, set-campaign-assets) only
+set-budget, set-bidding, set-age, set-location, create-campaign, set-campaign-status, set-campaign-assets,
+add-ad) only
 write a PLAN: the change is validated by the API (validateOnly) and saved to a file. Nothing changes
 until a human runs "google-ads apply <plan> --yes". Every apply is appended to an audit log.
 
@@ -44,6 +46,9 @@ QUICK REFERENCE:
   ages            performance by age range
   locations       targeted / excluded locations of a campaign
   geo-search      find geo target IDs by name
+  ads             live ads by ad group with the ad copy checks (keyword in headline, pins, assets)
+  keyword-ideas   Keyword Planner ideas for an area: volume, competition, bid range
+  check-spec      check a create-campaign spec (limits + playbook) without uploading anything
   suggest         rule-based findings from the playbook, each with the plan command to run
   add-negative    PLAN  add negative keywords to a campaign or a shared list (--with-accent-variants)
   create-negative-list PLAN  new shared negative keyword list, optionally attached
@@ -54,7 +59,8 @@ QUICK REFERENCE:
   set-bidding     PLAN  max-conversions (target CPA) | max-clicks (max CPC) | manual-cpc
   set-age         PLAN  exclude / include age ranges, age bid adjustments
   set-location    PLAN  add / exclude / remove locations, presence vs interest
-  create-campaign PLAN  new Search campaigns from a JSON spec (created PAUSED)
+  create-campaign PLAN  new Search campaigns from a JSON spec (created PAUSED); run check-spec first
+  add-ad          PLAN  a new RSA in an existing ad group
   set-campaign-status PLAN  start (--enable) or pause (--pause) campaigns
   set-campaign-assets PLAN  link / unlink assets of a campaign, create sitelinks
   apply           HUMAN applies a plan
@@ -70,6 +76,7 @@ QUICK REFERENCE:
   registerSuggest(program)
   registerWrite(program)
   registerNegatives(program)
+  registerAds(program)
   registerAuth(program)
   return program
 }

@@ -6,6 +6,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { CliError } from './config.js'
 import { keywordConflicts, missingAccentVariants, negativeBlocks, subsumes, type MissingVariant, type ScopedNegative } from './negatives.js'
+import { duplicateAdsAcrossGroups, keywordCoverage, lintAd, lintAssets, type AdText, type SitelinkText, type Snippet } from './adcopy.js'
 
 /** negative-missing-accent-variant: one finding per campaign or list, one plan command per match type. */
 function accentFinding(missing: MissingVariant[], target: string, campaign: string | undefined, where: string): Finding {
@@ -138,6 +139,10 @@ export interface SuggestData {
   negatives: Array<{ campaignId?: string; text: string; match?: string; level?: 'campaign' | 'adGroup' | 'list'; adGroupId?: string; listId?: string; listName?: string }>
   /** shared negative keyword lists and the campaigns they are attached to */
   negativeLists?: Array<{ id: string; name: string; campaignIds: string[] }>
+  /** enabled RSAs of enabled ad groups (for the ad copy rules) */
+  ads?: Array<{ campaignId: string; adGroupId: string; adGroup: string; ad: AdText }>
+  /** the assets each enabled campaign shows (own, or the account's) */
+  adAssets?: Array<{ campaignId: string; sitelinks: SitelinkText[]; callouts: string[]; snippets: Snippet[]; call: boolean }>
   ages: AgeData[]
   /** Daily campaign metrics of the last 30 days (ending windowEnd = yesterday), for the anomaly rules. */
   daily?: DailyData[]
@@ -561,6 +566,82 @@ export function analyze(data: SuggestData, rules: Rules): { measurementTrusted: 
           'Find the cause before changing anything: a change in the account (history/), a holiday or season, ' +
           'competitors (rank-lost share), or broken tracking (for conversions).',
         playbook: 'knowledge/playbook/diagnosis.md',
+      })
+    }
+  }
+
+  // --- ad copy and assets (knowledge/playbook/ad-copy.md) ----------------------------------------
+  const playbookAd = 'knowledge/playbook/ad-copy.md'
+  const adsByGroup = new Map<string, NonNullable<SuggestData['ads']>>()
+  for (const a of data.ads ?? []) if (enabledIds.has(a.campaignId)) adsByGroup.set(a.adGroupId, [...(adsByGroup.get(a.adGroupId) ?? []), a])
+  for (const [agId, list] of adsByGroup) {
+    const campaign = byId.get(list[0].campaignId)?.name
+    const kws = data.existingKeywords.filter(k => k.adGroupId === agId && k.serving !== false).map(k => k.text)
+    const covered = new Set(list.flatMap(a => keywordCoverage(kws, a.ad).covered.map(k => k.toLowerCase())))
+    const missing = [...new Set(keywordCoverage(kws, list[0].ad).missing.concat(keywordCoverage(kws, list[0].ad).covered))]
+      .filter(k => !covered.has(k.toLowerCase()))
+    if (missing.length) {
+      add({
+        rule: 'ad-keyword-coverage',
+        severity: 'medium',
+        campaign,
+        title: `${missing.length} keyword(s) of "${list[0].adGroup}" are in no headline word for word`,
+        why: `${missing.slice(0, 12).map(k => `"${k}"`).join(', ')}${missing.length > 12 ? '…' : ''}. Google counts a keyword for ad relevance and Ad Strength ` +
+          'only when it is entirely inside one headline. Write an ad (add-ad) whose headlines contain the main ones.',
+        playbook: playbookAd,
+      })
+    }
+    if (list.length === 1) {
+      add({
+        rule: 'single-rsa',
+        severity: 'low',
+        campaign,
+        title: `"${list[0].adGroup}" has one responsive search ad`,
+        why: 'Google recommends 2 RSAs per ad group (its data: +6.6 % conversions at a similar cost per conversion). Add a second one with other headlines: add-ad.',
+        playbook: playbookAd,
+      })
+    }
+    const pins = list.flatMap(a => lintAd(a.ad, [], `"${a.adGroup}"`)).filter(i => ['pinned-single-variant', 'too-many-pins', 'all-positions-pinned'].includes(i.code))
+    if (pins.length) {
+      add({
+        rule: 'ad-pinning',
+        severity: pins.some(i => i.code === 'all-positions-pinned') ? 'medium' : 'low',
+        campaign,
+        title: `Pinning limits the ads of "${list[0].adGroup}"`,
+        why: [...new Set(pins.map(i => i.message))].join('; ') + '.',
+        playbook: playbookAd,
+      })
+    }
+  }
+  for (const c of data.campaigns) {
+    const own = [...adsByGroup.values()].flat().filter(a => a.campaignId === c.id)
+    const groups = new Map<string, AdText[]>()
+    own.forEach(a => groups.set(a.adGroup, [...(groups.get(a.adGroup) ?? []), a.ad]))
+    const dup = duplicateAdsAcrossGroups([...groups].map(([name, ads]) => ({ name, ads })))
+    if (dup.length) {
+      add({
+        rule: 'duplicate-ads',
+        severity: 'low',
+        campaign: c.name,
+        title: 'Several ad groups use the same ad',
+        why: dup.map(i => i.message).join('; ') + '. Each ad group exists to speak to its own keywords.',
+        playbook: playbookAd,
+      })
+    }
+    const assets = (data.adAssets ?? []).find(a => a.campaignId === c.id)
+    if (!assets || !own.length) continue
+    const issues = lintAssets({ ...assets, headlines: own.flatMap(a => a.ad.headlines.map(h => h.text)) }, `"${c.name}"`).filter(i => i.level === 'warning')
+    if (!assets.call) issues.push({ level: 'warning', code: 'no-call-asset', message: 'no call asset' })
+    if (issues.length) {
+      add({
+        rule: 'ad-assets',
+        severity: 'low',
+        campaign: c.name,
+        title: `${issues.length} asset recommendation(s): ${[...new Set(issues.map(i => i.code))].join(', ')}`,
+        why: issues.map(i => i.message.replace(`"${c.name}": `, '')).join('; ') + '. Assets raise ad rank at no cost per click.',
+        playbook: playbookAd,
+        action: issues.some(i => i.code === 'few-sitelinks' || i.code === 'sitelink-without-description')
+          ? `google-ads set-campaign-assets --campaign ${c.id} --sitelink "Text=https://…"` : undefined,
       })
     }
   }

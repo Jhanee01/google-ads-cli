@@ -2,7 +2,7 @@ import type { Command } from 'commander'
 import { search, micros, round2 } from '../client.js'
 import { dateClause } from '../gaql.js'
 import { AGE_RANGES } from '../builders.js'
-import { adGroupKeywords, listCampaigns, negativeState } from '../state.js'
+import { adGroupKeywords, adsState, listCampaigns, negativeState } from '../state.js'
 import { analyze, loadRules, type SuggestData } from '../suggest.js'
 import { cidOf, out, qualityOf } from './read.js'
 
@@ -21,6 +21,7 @@ actions to propose to the human. Running an action only creates a plan.
 RULES: invalid-conversion-period, measurement-suspect, no-auction, smart-bidding-without-signal,
   rank-lost, budget-limited, presence-or-interest, broad-phrase-share, negative-missing-accent-variant,
   negative-blocks-keyword, always-negative, wasted-search-terms, promote-to-exact, low-quality-score-spend,
+  ad-keyword-coverage, single-rsa, ad-pinning, duplicate-ads, ad-assets,
   age-without-conversions, anomaly-serving-stopped, anomaly-cost-spike, anomaly-weekly
 Negatives are matched the way Google matches them (campaign, ad group and attached shared lists;
 no close variants; accented ≠ unaccented): see knowledge/playbook/negatives.md.
@@ -43,7 +44,7 @@ EXAMPLES:
       const window = dateClause(days)
       const { rules, source } = loadRules(o.rules)
 
-      const [campaigns, metrics, keywords, terms, existingKeywords, negatives, ages, daily] = await Promise.all([
+      const [campaigns, metrics, keywords, terms, existingKeywords, negatives, ages, daily, live] = await Promise.all([
         listCampaigns(cid),
         search(
           `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions,
@@ -79,6 +80,7 @@ EXAMPLES:
            FROM campaign WHERE campaign.status = 'ENABLED' AND segments.date DURING LAST_30_DAYS`,
           cid,
         ),
+        adsState(cid),
       ])
 
       const m = new Map<string, any>()
@@ -119,6 +121,8 @@ EXAMPLES:
         existingKeywords,
         negatives: negatives.negatives,
         negativeLists: negatives.lists,
+        ads: live.ads,
+        adAssets: live.assets,
         ages: ages.map(r => ({
           adGroupId: String(r.adGroup?.id), adGroup: r.adGroup?.name ?? '', campaignId: String(r.campaign?.id),
           age: AGE_LABEL[r.adGroupCriterion?.ageRange?.type] ?? String(r.adGroupCriterion?.ageRange?.type),
