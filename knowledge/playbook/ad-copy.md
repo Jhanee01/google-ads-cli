@@ -63,6 +63,13 @@ headlines 2–3 and description 2 do not always. Text may be cut with "…".
 11. **Consistency:** the headline, the callouts, the sitelinks and the landing page must say the
     same thing about price, VAT, area and hours.
 
+## Improving a live ad
+
+The text of a responsive search ad **cannot be edited** in Google Ads. Write the new ads (two per
+ad group), check them, then plan `add-ad --ad-group <id> --spec <ads.json> --pause <old ad ID>`:
+the new ads go live and the old one is paused in one atomic call, so the group is never empty
+and the old text does not keep competing. The old ad's statistics stay in the reports.
+
 ## Pinning
 
 - Google: "not recommended for most advertisers". It limits the combinations and lowers Ad

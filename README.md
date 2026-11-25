@@ -89,7 +89,7 @@ Three layers, each doing what it is good at:
 | `set-campaign-status --campaign 123,456 --enable \| --pause \| --remove [--force]` | start, pause or permanently remove whole campaigns (a running one is removed only with `--force`) |
 | `set-campaign-assets --campaign 123 [--link ids] [--unlink ids] [--sitelink "Text=https://…"]` | link or unlink existing assets (sitelinks, callouts, call, images…) and create new sitelinks, in one atomic call |
 | `create-campaign --spec new-campaigns.json` | new Search campaigns from a JSON spec, created **PAUSED** (see below); run `check-spec` first |
-| `add-ad --ad-group 456 --spec ad.json [--paused]` | a new responsive search ad in an existing ad group; limit errors refuse it, playbook warnings go into the plan |
+| `add-ad --ad-group 456 --spec ads.json [--pause adIds] [--paused]` | new responsive search ads (one or an array) in an existing ad group; RSA text cannot be edited, so `--pause` pauses the old ads in the same atomic call; limit errors refuse it, playbook warnings go into the plan |
 
 ### `create-campaign`: new Search campaigns from a spec
 

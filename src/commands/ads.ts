@@ -9,7 +9,7 @@ import { call, micros } from '../client.js'
 import { CliError } from '../config.js'
 import { ids } from '../gaql.js'
 import type { Change } from '../builders.js'
-import { duplicateAdsAcrossGroups, lintAdGroup, lintAssets, sameMeaningKey, type Issue } from '../adcopy.js'
+import { duplicateAdsAcrossGroups, lintAd, lintAdGroup, lintAssets, sameMeaningKey, type Issue } from '../adcopy.js'
 import { adText, checkSpec, rsa, type AdSpec, type CreateSpec } from '../campaign.js'
 import { negativeBlocks, words, stripAccents } from '../negatives.js'
 import { adGroupKeywords, adsState, getAdGroup, listCampaigns, negativeState } from '../state.js'
@@ -67,28 +67,35 @@ EXAMPLES:
       out(checkSpec(spec, existing))
     })
 
-  withPlanOptions(program.command('add-ad').description(`Plan: a new responsive search ad in an existing ad group.${PLAN_NOTE}
+  withPlanOptions(program.command('add-ad').description(`Plan: new responsive search ads in an existing ad group, optionally pausing old ones in the same call.${PLAN_NOTE}
 
-The ad JSON is one "ad" of the create-campaign spec:
+The JSON is one ad of the create-campaign spec, or an array of them:
   { "finalUrl": "https://…", "path1": "…", "headlines": ["…", { "text": "…", "pin": 1 }], "descriptions": ["…"] }
-Errors (limits) refuse the plan; the playbook warnings (keyword not in a headline, pins, too
-few headlines, the same headlines as another ad of the group) go into the plan's warnings.
-Google recommends 2 RSAs per ad group. See knowledge/playbook/ad-copy.md.
+The text of an RSA cannot be edited in Google Ads: to improve an ad, add the new one and pause the
+old one with --pause <adId> (ad IDs: google-ads ads). Both happen in one atomic call, so the ad
+group is never left without an ad. Errors (limits) refuse the plan; the playbook warnings
+(keyword not in a headline, pins, too few headlines, the same headlines as another ad) go into
+the plan's warnings. Google recommends 2 RSAs per ad group. See knowledge/playbook/ad-copy.md.
 
 EXAMPLES:
-  google-ads add-ad --ad-group 456 --spec specs/ad-moving-b.json`))
+  google-ads add-ad --ad-group 456 --spec specs/ad-moving-b.json
+  google-ads add-ad --ad-group 456 --spec specs/ads-moving.json --pause 832376008704`))
     .requiredOption('--ad-group <id>', 'ad group ID (see: google-ads ad-groups)')
-    .requiredOption('--spec <file>', 'path of the ad JSON')
-    .option('--paused', 'create it paused')
+    .requiredOption('--spec <file>', 'path of the ad JSON (one ad or an array)')
+    .option('--pause <adIds>', 'comma-separated IDs of ads in this ad group to pause in the same call')
+    .option('--paused', 'create the new ads paused')
     .action(async (_, cmd) => {
       const o = cmd.opts()
       const cid = cidOf(cmd)
-      const spec = readJson<AdSpec>(o.spec)
+      const raw = readJson<AdSpec | AdSpec[]>(o.spec)
+      const specs = Array.isArray(raw) ? raw : [raw]
       const [ag, keywords, { ads }] = await Promise.all([getAdGroup(o.adGroup, cid), adGroupKeywords(o.adGroup, cid), adsState(cid)])
       const existing = ads.filter(a => a.adGroupId === String(o.adGroup))
-      const change = buildAddAd({ adGroupResource: ag.resourceName, adGroupName: `${ag.campaign} › ${ag.name}`, spec, keywords: keywords.map(k => k.text),
-        existing: existing.map(a => a.ad), paused: Boolean(o.paused) })
-      await propose(cmd, 'add-ad', change, { adGroup: ag.name, ads: existing.map(a => ({ adId: a.adId, headlines: a.ad.headlines.map(h => h.text) })) })
+      const change = buildAddAds({
+        adGroupResource: ag.resourceName, adGroupName: `${ag.campaign} › ${ag.name}`, specs, keywords: keywords.filter(k => k.serving).map(k => k.text),
+        existing: existing.map(a => ({ adId: a.adId, ad: a.ad })), pause: ids(o.pause, 'ad ID'), paused: Boolean(o.paused),
+      })
+      await propose(cmd, 'add-ad', change, { adGroup: ag.name, ads: existing.map(a => ({ adId: a.adId, adStrength: a.adStrength, headlines: a.ad.headlines.map(h => h.text) })) })
     })
 
   program.command('keyword-ideas').description(`Keyword ideas from Google's Keyword Planner for an area and a language: average monthly
@@ -145,27 +152,52 @@ EXAMPLES:
     })
 }
 
-/** add-ad: the new RSA, refused on a limit error; the playbook warnings travel with the plan. */
-export function buildAddAd(input: { adGroupResource: string; adGroupName: string; spec: AdSpec; keywords: string[]; existing: Array<ReturnType<typeof adText>>; paused?: boolean }): Change {
-  if (!input.spec || typeof input.spec !== 'object') throw new CliError('The ad JSON must be an object with finalUrl, headlines and descriptions')
-  if (!input.spec.finalUrl) throw new CliError('The ad needs a finalUrl')
-  const ad = adText(input.spec)
-  const all = [...input.existing, ad]
-  const issues = lintAdGroup(all, input.keywords, `"${input.adGroupName}"`)
-  const own = lintAdGroup([ad], input.keywords, `"${input.adGroupName}" › new ad`)
-  const errors = own.filter(i => i.level === 'error')
-  if (errors.length) throw new CliError(errors.map(e => e.message).join('; '))
-  const warnings = [
-    ...own.filter(i => i.level === 'warning' && i.code !== 'single-rsa'),
-    ...issues.filter(i => i.code === 'single-rsa' || i.code === 'duplicate-ads'),
-  ].map(i => `[${i.code}] ${i.message}`)
-  return {
-    summary: [`add ${input.paused ? 'a PAUSED' : 'an'} RSA to "${input.adGroupName}": ${ad.headlines.length} headlines / ${ad.descriptions.length} descriptions → ${ad.finalUrl}`,
-      `  headlines: ${ad.headlines.map(h => `${h.text}${h.pin ? ` [pin ${h.pin}]` : ''}`).join(' · ')}`,
-      `  descriptions: ${ad.descriptions.map(d => d.text).join(' · ')}`],
-    warnings,
-    mutations: [{ endpoint: 'adGroupAds:mutate', operations: [{ create: { adGroup: input.adGroupResource, status: input.paused ? 'PAUSED' : 'ENABLED', ad: rsa(input.spec) } }] }],
+/**
+ * add-ad: new RSAs (refused on a limit error) and, in the same call, old ads of the group paused.
+ * The playbook warnings are computed for the ad group as it will be after the change.
+ */
+export function buildAddAds(input: {
+  adGroupResource: string
+  adGroupName: string
+  specs: AdSpec[]
+  keywords: string[]
+  existing: Array<{ adId: string; ad: ReturnType<typeof adText> }>
+  pause?: string[]
+  paused?: boolean
+}): Change {
+  if (!input.specs.length) throw new CliError('The ad JSON is empty')
+  for (const s of input.specs) {
+    if (!s || typeof s !== 'object' || Array.isArray(s)) throw new CliError('Each ad must be an object with finalUrl, headlines and descriptions')
+    if (!s.finalUrl) throw new CliError('Every ad needs a finalUrl')
   }
+  const pause = [...new Set(input.pause ?? [])]
+  for (const id of pause) if (!input.existing.some(e => e.adId === id)) throw new CliError(`Ad ${id} is not an enabled ad of "${input.adGroupName}" (see: google-ads ads)`)
+  const news = input.specs.map(adText)
+  const errors = news.flatMap((ad, i) => lintAdGroup([ad], input.keywords, `"${input.adGroupName}" › new ad ${i + 1}`)).filter(i => i.level === 'error')
+  if (errors.length) throw new CliError(errors.map(e => e.message).join('; '))
+  const after = [...input.existing.filter(e => !pause.includes(e.adId)).map(e => e.ad), ...(input.paused ? [] : news)]
+  const warnings = [
+    ...news.flatMap((ad, i) => lintAd(ad, input.keywords, `"${input.adGroupName}" › new ad ${i + 1}`)).filter(i => i.level === 'warning'),
+    ...lintAdGroup(after, input.keywords, `"${input.adGroupName}" after the change`).filter(i => i.code === 'single-rsa' || i.code === 'duplicate-ads' || i.code === 'no-ad'),
+  ].map(i => `[${i.code}] ${i.message}`)
+  if (!after.length) throw new CliError(`After this change "${input.adGroupName}" would have no enabled ad.`)
+  const [, cid, , agId] = input.adGroupResource.split('/')
+  const ops = [
+    ...input.specs.map(s => ({ create: { adGroup: input.adGroupResource, status: input.paused ? 'PAUSED' : 'ENABLED', ad: rsa(s) } })),
+    ...pause.map(id => ({ updateMask: 'status', update: { resourceName: `customers/${cid}/adGroupAds/${agId}~${id}`, status: 'PAUSED' } })),
+  ]
+  const summary = news.flatMap((ad, i) => [
+    `add ${input.paused ? 'a PAUSED' : 'an'} RSA to "${input.adGroupName}" (new ad ${i + 1}): ${ad.headlines.length} headlines / ${ad.descriptions.length} descriptions → ${ad.finalUrl}`,
+    `  headlines: ${ad.headlines.map(h => `${h.text}${h.pin ? ` [pin ${h.pin}]` : ''}`).join(' · ')}`,
+    `  descriptions: ${ad.descriptions.map(d => d.text).join(' · ')}`,
+  ])
+  for (const id of pause) summary.push(`pause ad ${id} in "${input.adGroupName}" (its text cannot be edited; the new ads replace it)`)
+  return { summary, warnings, mutations: [{ endpoint: 'adGroupAds:mutate', operations: ops }] }
+}
+
+/** One new RSA, no pause: kept for callers of the first version. */
+export function buildAddAd(input: { adGroupResource: string; adGroupName: string; spec: AdSpec; keywords: string[]; existing: Array<ReturnType<typeof adText>>; paused?: boolean }): Change {
+  return buildAddAds({ ...input, specs: [input.spec], existing: input.existing.map((ad, i) => ({ adId: `existing-${i}`, ad })) })
 }
 
 /** The ads command's output: per ad group and per campaign, with the checks. */

@@ -4,7 +4,7 @@ import {
   containsKeyword, duplicateAdsAcrossGroups, keywordCoverage, lintAd, lintAdGroup, lintAssets, lintKeywords, type AdText,
 } from '../src/adcopy.js'
 import { buildCreateCampaigns, checkSpec, type CampaignSpec } from '../src/campaign.js'
-import { annotateIdeas, buildAddAd, liveAdReport } from '../src/commands/ads.js'
+import { annotateIdeas, buildAddAd, buildAddAds, liveAdReport } from '../src/commands/ads.js'
 import { analyze, DEFAULT_RULES } from '../src/suggest.js'
 
 const H = (...t: Array<string | [string, number]>) => t.map(x => (typeof x === 'string' ? { text: x } : { text: x[0], pin: x[1] }))
@@ -133,6 +133,29 @@ describe('check-spec / create-campaign', () => {
   it('the negative conflict check follows Google: a phrase "5 tonnás" blocks "furgon 1,5 tonnás" only via the comma', () => {
     const r = checkSpec({ campaigns: [spec({ negatives: [{ text: '5 tonnás', match: 'PHRASE' }], adGroups: [{ name: 'A', keywords: ['furgon 1 5 tonnás'], ads: [ad() as any, ad() as any] }] })] })
     expect(r.errors).toEqual(['negative "5 tonnás" [PHRASE] blocks keyword "furgon 1 5 tonnás" in campaign "Költöztetés"'])
+  })
+})
+
+describe('add-ad: replace an ad (RSA text cannot be edited)', () => {
+  const base = { adGroupResource: 'customers/1/adGroups/20', adGroupName: 'Költöztetés › A', keywords: ['költöztetés árak', 'kisköltöztetés'] }
+  const second = { ...ad(), headlines: ad().headlines.map(h => ({ ...h, text: h.text.replace('Budapesten', 'Bp.') })) }
+  it('two new ads and the old one paused, in one atomic call', () => {
+    const c = buildAddAds({ ...base, specs: [ad() as any, second as any], existing: [{ adId: '99', ad: ad({ headlines: H('Old', 'B', 'C') }) }], pause: ['99'] })
+    const ops = c.mutations[0].operations as any[]
+    expect(c.mutations).toHaveLength(1)
+    expect(c.mutations[0].endpoint).toBe('adGroupAds:mutate')
+    expect(ops.filter(o => o.create)).toHaveLength(2)
+    expect(ops[2]).toEqual({ updateMask: 'status', update: { resourceName: 'customers/1/adGroupAds/20~99', status: 'PAUSED' } })
+    expect(c.summary.at(-1)).toMatch(/pause ad 99/)
+    expect(c.warnings.join(' ')).not.toMatch(/single-rsa|duplicate-ads/)
+  })
+  it('refuses an unknown ad ID and a group left without an enabled ad', () => {
+    expect(() => buildAddAds({ ...base, specs: [ad() as any], existing: [], pause: ['5'] })).toThrow(/not an enabled ad/)
+    expect(() => buildAddAds({ ...base, specs: [ad() as any], existing: [{ adId: '99', ad: ad() }], pause: ['99'], paused: true })).toThrow(/no enabled ad/)
+  })
+  it('warns when the group would still have one RSA', () => {
+    const c = buildAddAds({ ...base, specs: [ad() as any], existing: [{ adId: '99', ad: ad({ headlines: H('Old', 'B', 'C') }) }], pause: ['99'] })
+    expect(c.warnings.join(' ')).toMatch(/\[single-rsa\].*after the change/)
   })
 })
 
