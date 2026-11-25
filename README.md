@@ -60,7 +60,7 @@ Three layers, each doing what it is good at:
 | `campaigns` | IDs, status, bidding strategy, target CPA / max CPC, daily budget, location option |
 | `ad-groups [--campaign]` | ad group IDs |
 | `report --days 1\|7\|14\|30` | (`1` = yesterday) cost, clicks, impressions, CTR, avg. CPC, conversions, cost per conversion |
-| `keywords --days` | keyword performance with match type and the criterion ID |
+| `keywords --days` | keyword performance with match type, the criterion ID, and Quality Score with its three components |
 | `search-terms --days` | what people actually searched (negative keyword candidates) |
 | `negatives` | campaign-level negative keywords |
 | `ages --days [--campaign]` | performance by age range, exclusions and bid adjustments |
@@ -194,6 +194,9 @@ Every rule comes from something that actually went wrong on a live account:
 | `always-negative` | search terms contain words the account never wants | one BROAD `add-negative` |
 | `wasted-search-terms` | terms above the waste threshold, zero conversions, trusted tracking | review, `add-negative` EXACT for the irrelevant ones |
 | `promote-to-exact` | converting terms (or clicked ones, if tracking is unverified) that are no exact keyword yet | `add-keyword --match EXACT` |
+| `low-quality-score-spend` | a large share of the keyword spend goes to keywords with Quality Score ≤ 4 | report the weakest component (CTR, ad relevance, landing page) and its fix |
+| `anomaly-serving-stopped` / `anomaly-cost-spike` | zero impressions yesterday after a normal week / yesterday's cost ≥ 2x the 28-day daily average | find the cause first (billing, change, search terms) |
+| `anomaly-weekly` | last 7 days vs the average of the 3 weeks before: a metric fell ≥ 50 % or rose ≥ 100 % (silent on a quiet baseline) | report and explain, no action |
 | `age-without-conversions` | an age range spent without converting while the ad group converts | `set-age --exclude` |
 
 ```json

@@ -8,6 +8,12 @@
   "broadPhraseMaxShare": 0.6,
   "rankLostHigh": 0.5,
   "budgetLostHigh": 0.2,
+  "lowQualityScore": 4,
+  "lowQualityScoreMaxShare": 0.3,
+  "anomalyDropPct": 0.5,
+  "anomalyRisePct": 1,
+  "anomalyMinWeeklyClicks": 20,
+  "costSpikeFactor": 2,
   "alwaysNegative": ["free", "jobs", "diy"],
   "invalidConversionPeriods": [
     { "from": "2026-02-01", "to": "2026-04-30", "reason": "call tag never sent the conversion" }

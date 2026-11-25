@@ -10,6 +10,20 @@ const days = (cmd: Command) => dateClause(Number(cmd.opts().days))
 const pct = (v: unknown) => Math.round(Number(v ?? 0) * 100 * 100) / 100
 const AGE_LABEL = Object.fromEntries(Object.entries(AGE_RANGES).map(([k, v]) => [v, k]))
 
+const COMPONENT_RATINGS = new Set(['BELOW_AVERAGE', 'AVERAGE', 'ABOVE_AVERAGE'])
+const rating = (v: unknown): string | null => (typeof v === 'string' && COMPONENT_RATINGS.has(v) ? v : null)
+
+/** ad_group_criterion.quality_info → Quality Score (1–10, null when Google has too little data) and its three components. */
+export function qualityOf(info: any): { qualityScore: number | null; expectedCtr: string | null; adRelevance: string | null; landingPage: string | null } {
+  const qs = Number(info?.qualityScore)
+  return {
+    qualityScore: qs >= 1 && qs <= 10 ? qs : null,
+    expectedCtr: rating(info?.searchPredictedCtr),
+    adRelevance: rating(info?.creativeQualityScore),
+    landingPage: rating(info?.postClickQualityScore),
+  }
+}
+
 function withAccount(cmd: Command, period = false): Command {
   cmd.option('--customer-id <id>', 'account ID (no dashes); default GOOGLE_ADS_CUSTOMER_ID')
   if (period) cmd.option('--days <n>', 'period: 1 (yesterday), 7, 14 or 30', '30')
@@ -81,11 +95,17 @@ OUTPUT FIELDS: campaignId, campaign, status, cost, clicks, impressions, ctr (%),
   withAccount(program.command('keywords').description(`Keyword performance with match type. "Which keyword brought the leads?"
 
 OUTPUT FIELDS: criterion (adGroupId~criterionId, for pause-keyword), keyword, match, status, campaign, adGroup,
-  cost, clicks, ctr (%), avgCpc, conversions`), true)
+  cost, clicks, ctr (%), avgCpc, conversions,
+  qualityScore (1–10, current value; null = too little data), and its components
+  expectedCtr, adRelevance, landingPage (BELOW_AVERAGE | AVERAGE | ABOVE_AVERAGE | null)
+  A low score raises the price per click; the BELOW_AVERAGE component tells what to fix
+  (see knowledge/playbook/quality-score.md).`), true)
     .action(async (_, cmd) => {
       const rows = await search(
         `SELECT ad_group.id, ad_group_criterion.criterion_id, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type,
                 ad_group_criterion.status, campaign.name, ad_group.name,
+                ad_group_criterion.quality_info.quality_score, ad_group_criterion.quality_info.search_predicted_ctr,
+                ad_group_criterion.quality_info.creative_quality_score, ad_group_criterion.quality_info.post_click_quality_score,
                 metrics.cost_micros, metrics.clicks, metrics.ctr, metrics.average_cpc, metrics.conversions
          FROM keyword_view WHERE ${days(cmd)} ORDER BY metrics.cost_micros DESC`,
         cidOf(cmd),
@@ -95,7 +115,7 @@ OUTPUT FIELDS: criterion (adGroupId~criterionId, for pause-keyword), keyword, ma
         keyword: r.adGroupCriterion?.keyword?.text, match: r.adGroupCriterion?.keyword?.matchType, status: r.adGroupCriterion?.status,
         campaign: r.campaign?.name, adGroup: r.adGroup?.name, cost: micros(r.metrics?.costMicros),
         clicks: Number(r.metrics?.clicks ?? 0), ctr: pct(r.metrics?.ctr), avgCpc: micros(r.metrics?.averageCpc),
-        conversions: round2(r.metrics?.conversions),
+        conversions: round2(r.metrics?.conversions), ...qualityOf(r.adGroupCriterion?.qualityInfo),
       })))
     })
 

@@ -1,6 +1,6 @@
 /** Each scenario is one of the lessons in knowledge/playbook. */
 import { describe, expect, it } from 'vitest'
-import { analyze, containsWord, cpcCap, DEFAULT_RULES, type CampaignData, type SuggestData } from '../src/suggest.js'
+import { analyze, containsWord, cpcCap, DEFAULT_RULES, type CampaignData, type DailyData, type Rules, type SuggestData } from '../src/suggest.js'
 import { buildAddKeywords } from '../src/builders.js'
 
 const camp = (over: Partial<CampaignData> = {}): CampaignData => ({
@@ -12,7 +12,7 @@ const data = (over: Partial<SuggestData> = {}): SuggestData => ({
   campaigns: [camp()], keywords: [], searchTerms: [], existingKeywords: [], negatives: [], ages: [], ...over,
 })
 const rules = (over = {}) => ({ ...DEFAULT_RULES, trackingVerifiedOn: '2026-01-01', ...over })
-const rulesOf = (d: SuggestData, r = rules()) => analyze(d, r).findings.map(f => f.rule)
+const rulesOf = (d: SuggestData, r: Rules = rules()) => analyze(d, r).findings.map(f => f.rule)
 
 describe('measurement first', () => {
   it('by default conversions are not trusted, even when there are some', () => {
@@ -111,6 +111,84 @@ describe('search terms', () => {
   it('with untrusted tracking, promotion is by clicks and says so', () => {
     const d = data({ campaigns: [camp({ conversions: 0 })], searchTerms: [term('service city', { clicks: 5 })] })
     expect(analyze(d, rules()).findings.find(x => x.rule === 'promote-to-exact')!.title).toMatch(/tracking unverified/)
+  })
+})
+
+describe('Quality Score', () => {
+  const kw = (text: string, cost: number, qualityScore: number | null, over = {}) =>
+    ({ criterion: `20~${text.length}`, text, match: 'EXACT', status: 'ENABLED', campaignId: '10', adGroup: 'A', cost, clicks: 10, conversions: 0,
+      qualityScore, expectedCtr: 'AVERAGE', adRelevance: 'AVERAGE', landingPage: 'AVERAGE', ...over })
+  it('most of the spend on low-QS keywords → names the weakest component by spend', () => {
+    const f = analyze(data({ keywords: [
+      kw('service city', 6000, 3, { landingPage: 'BELOW_AVERAGE' }),
+      kw('service price', 2000, 4, { expectedCtr: 'BELOW_AVERAGE' }),
+      kw('service', 2000, 8),
+    ] }), rules({ wasteThreshold: 1000 })).findings.find(x => x.rule === 'low-quality-score-spend')!
+    expect(f).toMatchObject({ severity: 'high', title: expect.stringContaining('80%') })
+    expect(f.why).toContain('spend-weighted Quality Score 4.2')
+    expect(f.why).toContain('"service city" QS 3 6000 (below average: landing page experience)')
+    expect(f.why).toContain('Weakest component by spend: landing page experience')
+    expect(f.action).toBeUndefined()
+  })
+  it('a small low-QS share, or keywords without a score, do not fire', () => {
+    const r = rules({ wasteThreshold: 1000 })
+    expect(rulesOf(data({ keywords: [kw('a', 2000, 3), kw('b', 8000, 7)] }), r)).not.toContain('low-quality-score-spend')
+    expect(rulesOf(data({ keywords: [kw('a', 9000, null), kw('b', 1000, 7)] }), r)).not.toContain('low-quality-score-spend')
+  })
+  it('does not depend on conversion tracking', () => {
+    expect(rulesOf(data({ keywords: [kw('a', 9000, 2)] }), { ...DEFAULT_RULES, wasteThreshold: 1000 })).toContain('low-quality-score-spend')
+  })
+})
+
+describe('anomalies', () => {
+  // windowEnd 2026-11-04 = yesterday (offset 0)
+  const dayOf = (offset: number) => {
+    const d = new Date('2026-11-04T00:00:00Z')
+    d.setUTCDate(d.getUTCDate() - offset)
+    return d.toISOString().slice(0, 10)
+  }
+  /** 30 days of identical days, then overrides per offset */
+  const series = (base: Partial<DailyData>, over: Record<number, Partial<DailyData>> = {}): DailyData[] =>
+    Array.from({ length: 30 }, (_, i) => ({ campaignId: '10', date: dayOf(i), cost: 1000, clicks: 5, impressions: 50, conversions: 0.5, ...base, ...over[i] }))
+  const anomalies = (daily: DailyData[], r: Rules = rules({ wasteThreshold: 1000 })) =>
+    analyze(data({ daily }), r).findings.filter(f => f.rule.startsWith('anomaly'))
+
+  it('a steady account has no anomaly', () => {
+    expect(anomalies(series({}))).toEqual([])
+  })
+  it('zero impressions yesterday after normal days → serving stopped', () => {
+    const f = anomalies(series({}, { 0: { impressions: 0, clicks: 0, cost: 0, conversions: 0 } }))
+    expect(f.map(x => x.rule)).toContain('anomaly-serving-stopped')
+    expect(f[0]).toMatchObject({ severity: 'high', title: expect.stringContaining('2026-11-04') })
+  })
+  it('missing rows count as zero (the API leaves out empty days)', () => {
+    const f = anomalies(series({}).filter(r => r.date !== dayOf(0)))
+    expect(f.map(x => x.rule)).toContain('anomaly-serving-stopped')
+  })
+  it('yesterday at 2x the daily average → cost spike', () => {
+    const f = anomalies(series({}, { 0: { cost: 2500, clicks: 6 } })).find(x => x.rule === 'anomaly-cost-spike')!
+    expect(f.title).toContain('2.5x')
+    expect(f.why).toContain('1000 a day')
+  })
+  it('a spike below the waste threshold is ignored', () => {
+    expect(anomalies(series({ cost: 100 }, { 0: { cost: 300 } }), rules({ wasteThreshold: 1000 })).map(x => x.rule)).not.toContain('anomaly-cost-spike')
+  })
+  it('last week clicks halved and CPC doubled → weekly anomaly, medium', () => {
+    const lastWeek = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, { clicks: 2, cost: 800, impressions: 50 }]))
+    const f = anomalies(series({}, lastWeek)).find(x => x.rule === 'anomaly-weekly')!
+    expect(f.severity).toBe('medium')
+    expect(f.title).toContain('clicks -60%')
+    expect(f.title).toContain('avg. CPC +100%')
+    expect(f.why).toContain('2026-10-29 – 2026-11-04')
+  })
+  it('a quiet baseline is noise: no weekly anomaly below the minimum weekly clicks', () => {
+    const lastWeek = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, { clicks: 0 }]))
+    expect(anomalies(series({ clicks: 2 }, lastWeek)).map(x => x.rule)).not.toContain('anomaly-weekly')
+  })
+  it('conversions are compared only with trusted tracking', () => {
+    const lastWeek = Object.fromEntries(Array.from({ length: 7 }, (_, i) => [i, { conversions: 0 }]))
+    expect(anomalies(series({}, lastWeek))[0].title).toContain('conversions -100%')
+    expect(anomalies(series({}, lastWeek), { ...DEFAULT_RULES, wasteThreshold: 1000 })).toEqual([])
   })
 })
 

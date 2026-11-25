@@ -4,7 +4,7 @@ import { dateClause } from '../gaql.js'
 import { AGE_RANGES } from '../builders.js'
 import { adGroupKeywords, listCampaigns } from '../state.js'
 import { analyze, loadRules, type SuggestData } from '../suggest.js'
-import { cidOf, out } from './read.js'
+import { cidOf, out, qualityOf } from './read.js'
 
 const AGE_LABEL = Object.fromEntries(Object.entries(AGE_RANGES).map(([k, v]) => [v, k]))
 const share = (v: unknown): number | null => (v === undefined || v === null ? null : Number(v))
@@ -20,7 +20,10 @@ actions to propose to the human. Running an action only creates a plan.
 
 RULES: invalid-conversion-period, measurement-suspect, no-auction, smart-bidding-without-signal,
   rank-lost, budget-limited, presence-or-interest, broad-phrase-share, always-negative,
-  wasted-search-terms, promote-to-exact, age-without-conversions
+  wasted-search-terms, promote-to-exact, low-quality-score-spend, age-without-conversions,
+  anomaly-serving-stopped, anomaly-cost-spike, anomaly-weekly
+The anomaly rules always use the last 30 days, whatever --days is: yesterday against the 28 days
+before (serving stopped, cost spike), and the last 7 days against the average of the 3 weeks before.
 Thresholds and the always-negative words come from google-ads.rules.json (or --rules <file>);
 see google-ads.rules.example.json.
 
@@ -38,7 +41,7 @@ EXAMPLES:
       const window = dateClause(days)
       const { rules, source } = loadRules(o.rules)
 
-      const [campaigns, metrics, keywords, terms, existingKeywords, negatives, ages] = await Promise.all([
+      const [campaigns, metrics, keywords, terms, existingKeywords, negatives, ages, daily] = await Promise.all([
         listCampaigns(cid),
         search(
           `SELECT campaign.id, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions,
@@ -48,7 +51,9 @@ EXAMPLES:
         ),
         search(
           `SELECT campaign.id, ad_group.id, ad_group.name, ad_group_criterion.criterion_id, ad_group_criterion.keyword.text,
-                  ad_group_criterion.keyword.match_type, ad_group_criterion.status, metrics.cost_micros, metrics.clicks, metrics.conversions
+                  ad_group_criterion.keyword.match_type, ad_group_criterion.status, ad_group_criterion.quality_info.quality_score,
+                  ad_group_criterion.quality_info.search_predicted_ctr, ad_group_criterion.quality_info.creative_quality_score,
+                  ad_group_criterion.quality_info.post_click_quality_score, metrics.cost_micros, metrics.clicks, metrics.conversions
            FROM keyword_view WHERE campaign.status = 'ENABLED' AND ${window}`,
           cid,
         ),
@@ -68,6 +73,12 @@ EXAMPLES:
           `SELECT campaign.id, ad_group.id, ad_group.name, ad_group_criterion.age_range.type, ad_group_criterion.negative,
                   metrics.cost_micros, metrics.clicks, metrics.conversions
            FROM age_range_view WHERE campaign.status = 'ENABLED' AND ${window}`,
+          cid,
+        ),
+        // Always 30 days, whatever --days is: the anomaly rules compare yesterday and the last week with the weeks before.
+        search(
+          `SELECT campaign.id, segments.date, metrics.cost_micros, metrics.clicks, metrics.impressions, metrics.conversions
+           FROM campaign WHERE campaign.status = 'ENABLED' AND segments.date DURING LAST_30_DAYS`,
           cid,
         ),
       ])
@@ -96,6 +107,11 @@ EXAMPLES:
           criterion: `${r.adGroup?.id}~${r.adGroupCriterion?.criterionId}`, text: r.adGroupCriterion?.keyword?.text ?? '',
           match: r.adGroupCriterion?.keyword?.matchType ?? '', status: r.adGroupCriterion?.status ?? '', campaignId: String(r.campaign?.id),
           adGroup: r.adGroup?.name ?? '', cost: micros(r.metrics?.costMicros), clicks: Number(r.metrics?.clicks ?? 0), conversions: round2(r.metrics?.conversions),
+          ...qualityOf(r.adGroupCriterion?.qualityInfo),
+        })),
+        daily: daily.map(r => ({
+          campaignId: String(r.campaign?.id), date: r.segments?.date ?? '', cost: micros(r.metrics?.costMicros),
+          clicks: Number(r.metrics?.clicks ?? 0), impressions: Number(r.metrics?.impressions ?? 0), conversions: round2(r.metrics?.conversions),
         })),
         searchTerms: terms.map(r => ({
           term: r.searchTermView?.searchTerm ?? '', status: r.searchTermView?.status ?? 'NONE', campaignId: String(r.campaign?.id),
