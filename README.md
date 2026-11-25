@@ -68,6 +68,9 @@ Three layers, each doing what it is good at:
 | `ages --days [--campaign]` | performance by age range, exclusions and bid adjustments |
 | `locations --campaign` | targeted / excluded locations and the presence-vs-interest option |
 | `geo-search <name> [--country HU]` | geo target IDs by name |
+| `ads [--campaign]` | the live responsive search ads by ad group (headlines with pins, Ad Strength, approval) and the assets each campaign shows, with the ad copy checks |
+| `keyword-ideas --seed a,b [--url] --geo ids --language id` | Keyword Planner ideas for the area: monthly searches, competition, bid range; `inAccount` (close variants count) and `blockedIn` (a negative would block it) |
+| `check-spec --spec file [--offline]` | every check of `create-campaign` without uploading: errors (Google's limits) and warnings (playbook), with keyword–headline coverage per ad group |
 | `suggest --days [--rules file]` | rule-based findings from the playbook, each with its reason and the plan command |
 
 | Plan (validated, written to a file, nothing changes) | |
@@ -85,14 +88,16 @@ Three layers, each doing what it is good at:
 | `set-location --campaign --add / --exclude / --remove <geo IDs> [--presence-only]` | location targeting |
 | `set-campaign-status --campaign 123,456 --enable \| --pause \| --remove [--force]` | start, pause or permanently remove whole campaigns (a running one is removed only with `--force`) |
 | `set-campaign-assets --campaign 123 [--link ids] [--unlink ids] [--sitelink "Text=https://…"]` | link or unlink existing assets (sitelinks, callouts, call, images…) and create new sitelinks, in one atomic call |
-| `create-campaign --spec new-campaigns.json` | new Search campaigns from a JSON spec, created **PAUSED** (see below) |
+| `create-campaign --spec new-campaigns.json` | new Search campaigns from a JSON spec, created **PAUSED** (see below); run `check-spec` first |
+| `add-ad --ad-group 456 --spec ad.json [--paused]` | a new responsive search ad in an existing ad group; limit errors refuse it, playbook warnings go into the plan |
 
 ### `create-campaign`: new Search campaigns from a spec
 
 Everything in the spec goes into **one atomic** `googleAds:mutate` call (new resources reference
 each other through temporary IDs), so either all of it is created or nothing is:
-budget (not shared) → campaign → locations, languages, negatives → ad groups → keywords → one
-responsive search ad per ad group → call asset link, sitelinks, callouts.
+budget (not shared) → campaign → locations, languages, negatives → ad groups → keywords →
+responsive search ads (`"ad"` or `"ads"`, Google recommends 2 per ad group) → call asset link,
+sitelinks, callouts, structured snippets.
 
 The campaign is always created **PAUSED**, Google Search only (no search partners, no Display),
 with Maximize clicks and a **required** CPC cap, location option PRESENCE, automatic text assets
@@ -100,9 +105,25 @@ off. Starting it is a separate plan (`set-campaign-status --enable`).
 
 The command refuses before calling the API when: a campaign with that name exists, `geoIds` is
 empty (= the whole world), `maxCpc` is missing, an ad text is too long (headline 30, description
-90, sitelink 25, callout 25 characters, counted as characters, so accents count once), there are
-fewer than 3 headlines / 2 descriptions, or a campaign negative would block one of its own keywords.
-Identical sitelinks and callouts are created once and linked to every campaign that uses them.
+90, path 15, sitelink 25, sitelink description 35, callout 25, snippet value 25 characters, counted
+as characters, so accents count once), there are fewer than 3 headlines / 2 descriptions, every
+headline position is pinned, a keyword contains a comma or another refused character, a snippet
+header is not one of Google's, or a campaign negative would block one of its own keywords
+(matched as Google matches negatives).
+Identical sitelinks, callouts and snippets are created once and linked to every campaign that uses them.
+
+**`check-spec` runs the same checks without the API**, plus the playbook's recommendations as
+warnings ([ad-copy](knowledge/playbook/ad-copy.md), [keyword-planning](knowledge/playbook/keyword-planning.md)):
+- keywords not entirely inside one headline, with the coverage per ad group;
+- fewer than 10 headlines or 4 descriptions, similar or all-same-length headlines, no number;
+- one version pinned to a position, pins on several positions;
+- one RSA per ad group, the same ad in two ad groups;
+- fewer than 6 sitelinks or sitelinks without descriptions, fewer than 4 callouts, a callout
+  repeating a headline, no structured snippet, no call asset;
+- close-variant keywords, the same keyword in two campaigns;
+- accented negatives without their unaccented twin.
+
+`create-campaign` puts these warnings into the plan.
 
 ```json
 {
@@ -116,22 +137,26 @@ Identical sitelinks and callouts are created once and linked to every campaign t
     "sitelinks": [{ "text": "Prices", "url": "https://example.com/prices" },
                   { "text": "Get a quote", "url": "https://example.com/#contact" }],
     "callouts": ["Open 24/7", "Invoice provided"],
+    "snippets": [{ "header": "Service catalog", "values": ["Moving", "Transport", "Waste removal"] }],
     "negatives": [{ "text": "jobs" }, { "text": "free" }, { "text": "truck rental", "match": "PHRASE" }],
+    "negativeAccentVariants": true,
     "adGroups": [{
       "name": "Moving – exact",
       "keywords": ["moving city", "moving company city"],
-      "ad": {
+      "ads": [{
         "finalUrl": "https://example.com/moving",
         "path1": "moving",
-        "headlines": [{ "text": "Moving in the City", "pin": 1 }, "Fair, fixed prices", "Call now"],
-        "descriptions": ["We move your flat with a van, loading included.", "Call us any day."]
-      }
+        "headlines": [{ "text": "Moving in the City", "pin": 1 }, { "text": "Moving City Fast", "pin": 1 }, "Fair, fixed prices", "Call now"],
+        "descriptions": ["We move your flat with a van, loading included.", { "text": "Call us any day.", "pin": 2 }]
+      }]
     }]
   }]
 }
 ```
 
 Keywords are EXACT unless an ad group sets `"match"`; negatives are BROAD unless they set it.
+`"ad"` (one RSA) and `"ads"` (several) can both be used. `"negativeAccentVariants": true` adds the
+unaccented twin of every accented negative (Google treats them as two keywords).
 Geo IDs come from `geo-search`; language IDs are Google's language constants (English `1000`).
 Commas are not allowed in keywords, and Google treats them as word breaks: a PHRASE negative
 `"5 ton"` would also block the search `"1,5 ton"`. Use EXACT for such negatives.

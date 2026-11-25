@@ -13,7 +13,7 @@ by design. Do not try to work around it.
 ## Knowledge
 
 - General playbook: `knowledge/playbook/` in the google-ads-cli repo (measurement, bidding,
-  diagnosis, match types, negatives, targeting, assets, approval).
+  diagnosis, keyword planning, match types, negatives, ad copy, targeting, assets, approval).
 - The account's own knowledge base (its `Wiki.md`): the business, what it does not offer,
   broken tracking periods, past changes. **Read its summary first.** Account facts win over the
   general playbook.
@@ -48,8 +48,15 @@ by design. Do not try to work around it.
   you decide whether a word is really never wanted. Words wrong for every campaign go into a
   shared list (`create-negative-list --attach`); use `--with-accent-variants` for accented terms;
   mine `ngrams --days 60` for single words that spoil many searches.
-- New campaigns: write a JSON spec and run `create-campaign --spec <file>` (see the README). They
-  are always created PAUSED; starting them is a separate decision and a separate plan
-  (`set-campaign-status --campaign <ids> --enable`). Check the landing pages and that every
-  price or promise in the ad text is on the page before you write the spec.
+- **New campaigns**, in this order:
+  1. Keywords per service: `knowledge/playbook/keyword-planning.md`; numbers from `keyword-ideas`.
+  2. Negatives before launch, by category: `knowledge/playbook/negatives.md`.
+  3. Ad copy: `knowledge/playbook/ad-copy.md`. Read the landing pages first; every price or
+     promise in the text must be on the page. Write 2 RSAs per ad group with the main keywords
+     word for word in headlines, 6+ sitelinks with descriptions, callouts, a snippet.
+  4. Write the JSON spec (README), then run `check-spec --spec <file>` and fix it until
+     `errors` is empty. Fix each warning, or tell the human why you keep it.
+  5. `create-campaign --spec <file>`. Campaigns are created PAUSED; starting them is a separate
+     decision and a separate plan (`set-campaign-status --campaign <ids> --enable`).
+- **Existing ads:** `ads` shows the copy with its issues; a better or second ad is an `add-ad` plan.
 - `report --days 1` gives yesterday, a full finished day.

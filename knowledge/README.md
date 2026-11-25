@@ -20,6 +20,8 @@ account's own pages before it proposes a plan.
 | [measurement](playbook/measurement.md) | Conversions count only after tracking is verified end to end. Broken tracking can still show a few conversions for months. |
 | [bidding](playbook/bidding.md) | Smart Bidding without a conversion signal starves the campaign; use Maximize clicks with a CPC cap until the signal exists. |
 | [diagnosis](playbook/diagnosis.md) | "No impressions": rank loss, budget loss, or no auction at all (billing). The impression share columns tell which. |
+| [keyword-planning](playbook/keyword-planning.md) | Plan keywords per service from what the business sells; every match type matches close variants (accents too), so no copies; one theme, one ad group, its own landing page. |
+| [ad-copy](playbook/ad-copy.md) | Keywords word for word inside headlines, 2 RSAs per ad group, pin 2–3 versions or none, 6+ sitelinks with descriptions; the CLI checks, you write. |
 | [match-types](playbook/match-types.md) | On a small budget, broad and phrase eat the money. Exact first; promote proven search terms to exact. |
 | [negatives](playbook/negatives.md) | Build the negative list before launch, by category; negatives match no close variants, and an accented and an unaccented negative are two keywords. |
 | [targeting](playbook/targeting.md) | Presence-only for local services; age, gender and schedule only with valid conversion data. |

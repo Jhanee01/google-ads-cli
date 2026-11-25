@@ -107,6 +107,19 @@ export async function mutate(
   return res.json()
 }
 
+/**
+ * A read-only service call on the customer, e.g. "generateKeywordIdeas" (KeywordPlanIdeaService).
+ * It changes nothing in the account.
+ */
+export async function call(method: string, body: Record<string, unknown>, customerId?: string): Promise<any> {
+  const cid = resolveCustomerId(customerId)
+  const token = await getAccessToken()
+  const url = `https://googleads.googleapis.com/${config.apiVersion}/customers/${cid}:${method}`
+  const res = await fetch(url, { method: 'POST', headers: headers(token, cid), body: JSON.stringify(body) })
+  if (!res.ok) throw new CliError(`${method} → ${apiErrorMessage(res.status, await res.text())}`)
+  return res.json()
+}
+
 /** micros (string or number) → account currency units, 2 decimals. */
 export function micros(v: unknown): number {
   return Math.round((Number(v ?? 0) / 1_000_000) * 100) / 100

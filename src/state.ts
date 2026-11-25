@@ -4,6 +4,82 @@ import { search, micros } from './client.js'
 import { id, str, ids as idList } from './gaql.js'
 import type { AgeCriterion, KeywordRow, LocationCriterion, MatchType } from './builders.js'
 import type { ScopedNegative } from './negatives.js'
+import type { AdText, SitelinkText, Snippet } from './adcopy.js'
+
+export interface LiveAd {
+  campaignId: string
+  campaign: string
+  adGroupId: string
+  adGroup: string
+  adId: string
+  status: string
+  approval: string
+  adStrength: string
+  ad: AdText
+}
+export interface LiveAssets { campaignId: string; campaign: string; sitelinks: SitelinkText[]; callouts: string[]; snippets: Snippet[]; call: boolean }
+
+const PIN_NUMBER: Record<string, number> = { HEADLINE_1: 1, HEADLINE_2: 2, HEADLINE_3: 3, DESCRIPTION_1: 1, DESCRIPTION_2: 2 }
+
+/**
+ * The enabled responsive search ads of enabled ad groups and campaigns, and the assets each
+ * enabled campaign really shows: its own sitelinks / callouts / snippets, or the account-level
+ * ones when it has none of that type (a lower level overrides a higher one).
+ */
+export async function adsState(cid?: string): Promise<{ ads: LiveAd[]; assets: LiveAssets[] }> {
+  const ASSET_FIELDS = `asset.sitelink_asset.link_text, asset.sitelink_asset.description1, asset.sitelink_asset.description2,
+    asset.callout_asset.callout_text, asset.structured_snippet_asset.header, asset.structured_snippet_asset.values`
+  const [adRows, campRows, accountRows, campaigns] = await Promise.all([
+    search(
+      `SELECT campaign.id, campaign.name, ad_group.id, ad_group.name, ad_group_ad.ad.id, ad_group_ad.status,
+              ad_group_ad.policy_summary.approval_status, ad_group_ad.ad_strength, ad_group_ad.ad.final_urls,
+              ad_group_ad.ad.responsive_search_ad.headlines, ad_group_ad.ad.responsive_search_ad.descriptions,
+              ad_group_ad.ad.responsive_search_ad.path1, ad_group_ad.ad.responsive_search_ad.path2
+       FROM ad_group_ad
+       WHERE campaign.status = 'ENABLED' AND ad_group.status = 'ENABLED' AND ad_group_ad.status = 'ENABLED'
+         AND ad_group_ad.ad.type = 'RESPONSIVE_SEARCH_AD'`, cid),
+    search(
+      `SELECT campaign.id, campaign.status, campaign_asset.field_type, ${ASSET_FIELDS} FROM campaign_asset
+       WHERE campaign.status = 'ENABLED' AND campaign_asset.status = 'ENABLED'`, cid),
+    search(`SELECT customer_asset.field_type, ${ASSET_FIELDS} FROM customer_asset WHERE customer_asset.status = 'ENABLED'`, cid),
+    listCampaigns(cid),
+  ])
+  const ads: LiveAd[] = adRows.map(r => {
+    const a = r.adGroupAd ?? {}
+    const rsa = a.ad?.responsiveSearchAd ?? {}
+    const pin = (p?: string) => (p && PIN_NUMBER[p] ? { pin: PIN_NUMBER[p] } : {})
+    return {
+      campaignId: String(r.campaign?.id), campaign: r.campaign?.name ?? '', adGroupId: String(r.adGroup?.id), adGroup: r.adGroup?.name ?? '',
+      adId: String(a.ad?.id), status: a.status ?? '', approval: a.policySummary?.approvalStatus ?? '', adStrength: a.adStrength ?? '',
+      ad: {
+        finalUrl: (a.ad?.finalUrls ?? [])[0], path1: rsa.path1, path2: rsa.path2,
+        headlines: (rsa.headlines ?? []).map((h: any) => ({ text: h.text, ...pin(h.pinnedField) })),
+        descriptions: (rsa.descriptions ?? []).map((d: any) => ({ text: d.text, ...pin(d.pinnedField) })),
+      },
+    }
+  })
+  const collect = (rows: any[], field: (r: any) => string) => ({
+    sitelinks: rows.filter(r => field(r) === 'SITELINK').map(r => ({
+      text: r.asset?.sitelinkAsset?.linkText ?? '',
+      ...(r.asset?.sitelinkAsset?.description1 ? { description1: r.asset.sitelinkAsset.description1, description2: r.asset.sitelinkAsset.description2 } : {}),
+    })),
+    callouts: rows.filter(r => field(r) === 'CALLOUT').map(r => r.asset?.calloutAsset?.calloutText ?? ''),
+    snippets: rows.filter(r => field(r) === 'STRUCTURED_SNIPPET').map(r => ({ header: r.asset?.structuredSnippetAsset?.header ?? '', values: r.asset?.structuredSnippetAsset?.values ?? [] })),
+    call: rows.some(r => field(r) === 'CALL'),
+  })
+  const account = collect(accountRows, r => r.customerAsset?.fieldType)
+  const assets: LiveAssets[] = campaigns.filter(c => c.status === 'ENABLED').map(c => {
+    const own = collect(campRows.filter(r => String(r.campaign?.id) === c.id), r => r.campaignAsset?.fieldType)
+    return {
+      campaignId: c.id, campaign: c.name,
+      sitelinks: own.sitelinks.length ? own.sitelinks : account.sitelinks,
+      callouts: own.callouts.length ? own.callouts : account.callouts,
+      snippets: own.snippets.length ? own.snippets : account.snippets,
+      call: own.call || account.call,
+    }
+  })
+  return { ads, assets }
+}
 
 export interface CampaignState {
   resourceName: string
