@@ -227,6 +227,8 @@ export function buildCampaignAssets(input: {
   link: Array<{ assetId: string; type: string; label: string }>
   unlink: string[]
   sitelinks: SitelinkSpec[]
+  callouts?: string[]
+  snippets?: Snippet[]
 }): Change {
   const c: Change = { summary: [], warnings: [], mutations: [] }
   const ops: Op[] = []
@@ -247,13 +249,31 @@ export function buildCampaignAssets(input: {
     c.summary.push(`link ${a.type} asset ${a.assetId} (${a.label}) to campaign "${input.campaignName}"`)
   }
   let next = -1
+  const callouts = input.callouts ?? []
+  const snippets = input.snippets ?? []
+  const lintErrors = lintAssets({ sitelinks: input.sitelinks, callouts, snippets, headlines: [] }, `campaign "${input.campaignName}"`)
+    .filter(i => i.level === 'error')
+  if (lintErrors.length) throw new CliError(lintErrors.map(i => i.message).join('; '))
   for (const s of input.sitelinks) {
     check(len(s.text) >= 1 && len(s.text) <= 25, `sitelink text "${s.text}" must be 1–25 characters`)
     url(s.url, `sitelink "${s.text}" url`)
     const rn = `${base}/assets/${next--}`
-    ops.push({ assetOperation: { create: { resourceName: rn, finalUrls: [s.url], sitelinkAsset: { linkText: s.text } } } })
+    const desc = s.description1 ? { description1: s.description1, description2: s.description2 } : {}
+    ops.push({ assetOperation: { create: { resourceName: rn, finalUrls: [s.url], sitelinkAsset: { linkText: s.text, ...desc } } } })
     ops.push({ campaignAssetOperation: { create: { campaign: input.campaignResource, asset: rn, fieldType: 'SITELINK' } } })
-    c.summary.push(`create sitelink "${s.text}" → ${s.url} and link it to campaign "${input.campaignName}"`)
+    c.summary.push(`create sitelink "${s.text}"${s.description1 ? ` (${s.description1} / ${s.description2})` : ''} → ${s.url} and link it to campaign "${input.campaignName}"`)
+  }
+  for (const t of callouts) {
+    const rn = `${base}/assets/${next--}`
+    ops.push({ assetOperation: { create: { resourceName: rn, calloutAsset: { calloutText: t } } } })
+    ops.push({ campaignAssetOperation: { create: { campaign: input.campaignResource, asset: rn, fieldType: 'CALLOUT' } } })
+    c.summary.push(`create callout "${t}" and link it to campaign "${input.campaignName}"`)
+  }
+  for (const sn of snippets) {
+    const rn = `${base}/assets/${next--}`
+    ops.push({ assetOperation: { create: { resourceName: rn, structuredSnippetAsset: { header: sn.header, values: sn.values } } } })
+    ops.push({ campaignAssetOperation: { create: { campaign: input.campaignResource, asset: rn, fieldType: 'STRUCTURED_SNIPPET' } } })
+    c.summary.push(`create structured snippet "${sn.header}": ${sn.values.join(', ')} and link it to campaign "${input.campaignName}"`)
   }
   // Removes first, so an unlink + link of the same asset in one call works.
   ops.sort((a, b) => Number(Boolean((b as any).campaignAssetOperation?.remove)) - Number(Boolean((a as any).campaignAssetOperation?.remove)))

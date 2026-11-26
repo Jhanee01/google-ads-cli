@@ -153,3 +153,21 @@ describe('lastDaysClause', () => {
     expect(() => lastDaysClause(0)).toThrow()
   })
 })
+
+describe('remove-negative', () => {
+  it('removes the matching campaign negatives, every match type unless --match, and refuses unknown terms', async () => {
+    const { buildRemoveNegatives } = await import('../src/builders.js')
+    const existing = [
+      { resourceName: 'customers/1/campaignCriteria/9~11', text: 'raklap', match: 'BROAD' },
+      { resourceName: 'customers/1/campaignCriteria/9~12', text: 'raklap', match: 'EXACT' },
+      { resourceName: 'customers/1/campaignCriteria/9~13', text: 'kamion', match: 'BROAD' },
+    ]
+    const all = buildRemoveNegatives({ campaignName: 'C', terms: ['Raklap'], existing })
+    expect(all.mutations[0]).toEqual({ endpoint: 'campaignCriteria:mutate', operations: [
+      { remove: 'customers/1/campaignCriteria/9~11' }, { remove: 'customers/1/campaignCriteria/9~12' },
+    ] })
+    const broad = buildRemoveNegatives({ campaignName: 'C', terms: ['raklap'], match: 'BROAD', existing })
+    expect(broad.mutations[0].operations).toEqual([{ remove: 'customers/1/campaignCriteria/9~11' }])
+    expect(() => buildRemoveNegatives({ campaignName: 'C', terms: ['raklapp'], existing })).toThrow(/not a negative/)
+  })
+})

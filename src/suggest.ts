@@ -370,8 +370,11 @@ export function analyze(data: SuggestData, rules: Rules): { measurementTrusted: 
       campaign: byId.get(cid)?.name,
       title: `${list.length} enabled keyword(s) blocked by a negative of their own campaign`,
       why: list.slice(0, 10).map(x => `"${x.keyword.text}" [${x.keyword.match}]${x.keyword.adGroup ? ` in "${x.keyword.adGroup}"` : ''} ← negative "${x.negative.text}" [${x.negative.match}] (${where(x.negative)})`).join('; ') +
-        '. The keyword cannot show for its own search. Narrow the negative (EXACT, or a longer phrase) or remove it in the UI; if the keyword is unwanted, pause it.',
+        '. The keyword cannot show for its own search. Narrow the negative (EXACT, or a longer phrase) or remove it (remove-negative for a campaign negative); if the keyword is unwanted, pause it.',
       playbook: 'knowledge/playbook/negatives.md',
+      action: list.some(x => x.negative.level === 'campaign')
+        ? `google-ads remove-negative --campaign ${cid} --terms "${[...new Set(list.filter(x => x.negative.level === 'campaign').map(x => x.negative.text))].join(',')}"`
+        : undefined,
     })
   }
 
@@ -640,8 +643,8 @@ export function analyze(data: SuggestData, rules: Rules): { measurementTrusted: 
         title: `${issues.length} asset recommendation(s): ${[...new Set(issues.map(i => i.code))].join(', ')}`,
         why: issues.map(i => i.message.replace(`"${c.name}": `, '')).join('; ') + '. Assets raise ad rank at no cost per click.',
         playbook: playbookAd,
-        action: issues.some(i => i.code === 'few-sitelinks' || i.code === 'sitelink-without-description')
-          ? `google-ads set-campaign-assets --campaign ${c.id} --sitelink "Text=https://…"` : undefined,
+        action: issues.some(i => i.code !== 'no-call-asset')
+          ? `google-ads set-campaign-assets --campaign ${c.id} [--unlink <old asset IDs>] --spec assets.json` : undefined,
       })
     }
   }

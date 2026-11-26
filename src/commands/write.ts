@@ -5,7 +5,7 @@ import { config, CliError } from '../config.js'
 import { mutate, resolveCustomerId, micros } from '../client.js'
 import { ids } from '../gaql.js'
 import {
-  ageList, bidAdjustments, buildAddKeywords, buildAddNegatives, buildAge, buildBidding, buildBudget, buildKeywordStatus, buildLocation,
+  ageList, bidAdjustments, buildAddKeywords, buildAddNegatives, buildRemoveNegatives, buildAge, buildBidding, buildBudget, buildKeywordStatus, buildLocation,
   matchType, strategy, type Change, type GeoType,
 } from '../builders.js'
 import { audit, checkPlan, createPlan, loadPlan, markApplied, savePlan } from '../plan.js'
@@ -15,7 +15,8 @@ import {
 } from '../state.js'
 import { cidOf, out } from './read.js'
 import { readFileSync } from 'node:fs'
-import { buildCampaignAssets, buildCampaignStatus, buildCreateCampaigns, parseSitelink, type CreateSpec } from '../campaign.js'
+import { buildCampaignAssets, buildCampaignStatus, buildCreateCampaigns, parseSitelink, type CreateSpec, type SitelinkSpec } from '../campaign.js'
+import type { Snippet } from '../adcopy.js'
 import { search } from '../client.js'
 
 const SMART_BIDDING = new Set(['MAXIMIZE_CONVERSIONS', 'MAXIMIZE_CONVERSION_VALUE', 'TARGET_CPA', 'TARGET_ROAS'])
@@ -93,6 +94,32 @@ EXAMPLES:
         campaignResource: camp.resourceName, campaignName: camp.name, terms, match: matchType(o.match), existing, accentVariants,
       })
       await propose(cmd, 'add-negative', change, { campaign: camp.name, negatives: existing.length })
+    })
+
+  withPlanOptions(program.command('remove-negative').description(`Plan: remove negative keywords from a campaign.${PLAN_NOTE}
+
+Use it when a negative blocks searches for something the business does offer (check the search
+terms first). The text matches case-insensitively; --match limits it to one match type, otherwise
+every match type of that text is removed. A term that is not a negative of the campaign is refused.
+
+EXAMPLES:
+  google-ads remove-negative --campaign 123 --terms "raklap"
+  google-ads remove-negative --campaign 123 --terms "raklap,raklapos" --match BROAD`))
+    .requiredOption('--campaign <id>', 'campaign ID (see: google-ads campaigns)')
+    .requiredOption('--terms <list>', 'comma-separated terms')
+    .option('--match <type>', 'EXACT | PHRASE | BROAD (default: every match type)')
+    .action(async (_, cmd) => {
+      const o = cmd.opts()
+      const cid = cidOf(cmd)
+      const camp = await getCampaign(o.campaign, cid)
+      const rows = await search(
+        `SELECT campaign.id, campaign_criterion.resource_name, campaign_criterion.keyword.text, campaign_criterion.keyword.match_type
+         FROM campaign_criterion WHERE campaign.id = ${camp.id} AND campaign_criterion.type = 'KEYWORD' AND campaign_criterion.negative = TRUE`, cid)
+      const existing = rows.map(r => ({ resourceName: r.campaignCriterion.resourceName, text: r.campaignCriterion.keyword.text, match: r.campaignCriterion.keyword.matchType }))
+      const change = buildRemoveNegatives({
+        campaignName: camp.name, terms: String(o.terms).split(','), match: o.match ? matchType(o.match) : undefined, existing,
+      })
+      await propose(cmd, 'remove-negative', change, { campaign: camp.name, negatives: existing.length })
     })
 
   withPlanOptions(program.command('add-keyword').description(`Plan: add keywords to an ad group (EXACT by default).${PLAN_NOTE}
@@ -324,22 +351,34 @@ EXAMPLES:
            type comes from the asset itself. Already linked ones are skipped.
 --unlink   asset IDs linked to this campaign (the asset itself stays in the account).
 --sitelink "Text=https://…"  create a new sitelink and link it (repeatable).
-All in one atomic call.
+--spec     JSON file with new assets to create and link:
+           { "sitelinks": [{ "text", "url", "description1", "description2" }],
+             "callouts": ["…"], "snippets": [{ "header": "Service catalog", "values": ["…"] }] }
+           Checked like create-campaign assets (lengths, both description lines, snippet header).
+All in one atomic call: e.g. --unlink the old assets and --spec the new ones.
 
 EXAMPLES:
   google-ads set-campaign-assets --campaign 123 --link 111,222 --unlink 333
-  google-ads set-campaign-assets --campaign 123 --sitelink "Get a quote=https://example.com/#contact"`))
+  google-ads set-campaign-assets --campaign 123 --sitelink "Get a quote=https://example.com/#contact"
+  google-ads set-campaign-assets --campaign 123 --unlink 111,222 --spec specs/assets.json`))
     .requiredOption('--campaign <id>', 'campaign ID')
     .option('--link <ids>', 'comma-separated asset IDs to link')
     .option('--unlink <ids>', 'comma-separated asset IDs to unlink')
     .option('--sitelink <text=url>', 'new sitelink (repeatable)', (v: string, all: string[]) => [...all, v], [] as string[])
+    .option('--spec <file>', 'JSON file with new sitelinks (with descriptions), callouts and structured snippets')
     .action(async (_, cmd) => {
       const o = cmd.opts()
       const cid = cidOf(cmd)
       const linkIds = ids(o.link, 'asset ID')
       const unlink = ids(o.unlink, 'asset ID')
-      const sitelinks = (o.sitelink as string[]).map(parseSitelink)
-      if (!linkIds.length && !unlink.length && !sitelinks.length) throw new CliError('Give --link, --unlink or --sitelink')
+      let spec: { sitelinks?: SitelinkSpec[]; callouts?: string[]; snippets?: Snippet[] } = {}
+      if (o.spec) {
+        try { spec = JSON.parse(readFileSync(o.spec, 'utf-8')) } catch (e) { throw new CliError(`Cannot read --spec ${o.spec}: ${(e as Error).message}`) }
+      }
+      const sitelinks = [...(o.sitelink as string[]).map(parseSitelink), ...(spec.sitelinks ?? [])]
+      const callouts = spec.callouts ?? []
+      const snippets = spec.snippets ?? []
+      if (!linkIds.length && !unlink.length && !sitelinks.length && !callouts.length && !snippets.length) throw new CliError('Give --link, --unlink, --sitelink or --spec')
       const camp = await getCampaign(o.campaign, cid)
       const linkedRows = await search(
         `SELECT campaign.id, campaign_asset.resource_name, campaign_asset.field_type, asset.id FROM campaign_asset
@@ -355,7 +394,7 @@ EXAMPLES:
         return { assetId: id, type: a.type, label: a.sitelinkAsset?.linkText ?? a.calloutAsset?.calloutText ?? a.callAsset?.phoneNumber ?? a.name ?? '' }
       })
       const change = buildCampaignAssets({
-        customerId: resolveCustomerId(cid), campaignResource: camp.resourceName, campaignName: camp.name, linked, link, unlink, sitelinks,
+        customerId: resolveCustomerId(cid), campaignResource: camp.resourceName, campaignName: camp.name, linked, link, unlink, sitelinks, callouts, snippets,
       })
       await propose(cmd, 'set-campaign-assets', change, { campaign: camp.name, linked })
     })

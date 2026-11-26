@@ -123,4 +123,24 @@ describe('set-campaign-assets', () => {
     expect(() => buildCampaignAssets({ customerId: '1', campaignResource: 'x', campaignName: 'C', linked: [], link: [], unlink: ['5'], sitelinks: [] })).toThrow(/not linked/)
     expect(() => parseSitelink('no url')).toThrow(/looks like/)
   })
+
+  it('creates sitelinks with descriptions, callouts and structured snippets, and refuses invalid ones', async () => {
+    const { buildCampaignAssets } = await import('../src/campaign.js')
+    const base = { customerId: '1', campaignResource: 'customers/1/campaigns/9', campaignName: 'C', linked: [], link: [], unlink: [] }
+    const c = buildCampaignAssets({
+      ...base,
+      sitelinks: [{ text: 'Árak', url: 'https://x.hu/#arak', description1: 'Kiszállás + óradíj', description2: 'Emeleti díj nélkül' }],
+      callouts: ['Pontos érkezés'],
+      snippets: [{ header: 'Service catalog', values: ['Költöztetés', 'Fuvarozás', 'Bútorszállítás'] }],
+    })
+    const ops = c.mutations[0].operations as any[]
+    expect(ops[0].assetOperation.create.sitelinkAsset).toEqual({ linkText: 'Árak', description1: 'Kiszállás + óradíj', description2: 'Emeleti díj nélkül' })
+    expect(ops[2].assetOperation.create.calloutAsset).toEqual({ calloutText: 'Pontos érkezés' })
+    expect(ops[3].campaignAssetOperation.create).toEqual({ campaign: 'customers/1/campaigns/9', asset: 'customers/1/assets/-2', fieldType: 'CALLOUT' })
+    expect(ops[4].assetOperation.create.structuredSnippetAsset).toEqual({ header: 'Service catalog', values: ['Költöztetés', 'Fuvarozás', 'Bútorszállítás'] })
+    expect(ops[5].campaignAssetOperation.create.fieldType).toBe('STRUCTURED_SNIPPET')
+    expect(() => buildCampaignAssets({ ...base, sitelinks: [{ text: 'A', url: 'https://x.hu', description1: 'egy' }] })).toThrow(/both description/)
+    expect(() => buildCampaignAssets({ ...base, sitelinks: [], callouts: ['x'.repeat(26)] })).toThrow(/callout/)
+    expect(() => buildCampaignAssets({ ...base, sitelinks: [], snippets: [{ header: 'Szolgáltatások', values: ['a', 'b', 'c'] }] })).toThrow(/header/)
+  })
 })

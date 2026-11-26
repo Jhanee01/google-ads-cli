@@ -19,7 +19,7 @@ export function buildProgram(): Command {
     .description(`Agent-friendly CLI for the Google Ads API.
 
 READ commands return JSON and never change anything.
-WRITE commands (add-negative, create-negative-list, attach-negative-list, add-keyword, pause-keyword,
+WRITE commands (add-negative, remove-negative, create-negative-list, attach-negative-list, add-keyword, pause-keyword,
 set-budget, set-bidding, set-age, set-location, create-campaign, set-campaign-status, set-campaign-assets,
 add-ad) only
 write a PLAN: the change is validated by the API (validateOnly) and saved to a file. Nothing changes
@@ -51,6 +51,7 @@ QUICK REFERENCE:
   check-spec      check a create-campaign spec (limits + playbook) without uploading anything
   suggest         rule-based findings from the playbook, each with the plan command to run
   add-negative    PLAN  add negative keywords to a campaign or a shared list (--with-accent-variants)
+  remove-negative PLAN  remove negative keywords from a campaign
   create-negative-list PLAN  new shared negative keyword list, optionally attached
   attach-negative-list PLAN  attach / detach a shared list
   add-keyword     PLAN  add (exact) keywords, e.g. promoted search terms

@@ -160,6 +160,7 @@ describe('negatives', () => {
     }), rules()).findings.find(x => x.rule === 'negative-blocks-keyword')!
     expect(f).toMatchObject({ severity: 'high', title: expect.stringMatching(/^1 enabled keyword/) })
     expect(f.why).toContain('"furgon 1,5 tonnás" [EXACT] in "Fuvar" ← negative "5 tonnás" [PHRASE] (campaign)')
+    expect(f.action).toBe('google-ads remove-negative --campaign 10 --terms "5 tonnás"')
   })
 })
 
