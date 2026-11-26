@@ -62,6 +62,38 @@ export function buildAddNegatives(input: {
   return c
 }
 
+/**
+ * Remove campaign-level negative keywords (e.g. one that blocks a service the business does offer).
+ * Matches the text case-insensitively; with `match` only that match type is removed.
+ * A term that is not a negative of the campaign is refused, so a typo never passes silently.
+ */
+export function buildRemoveNegatives(input: {
+  campaignName: string
+  terms: string[]
+  match?: MatchType
+  existing: Array<{ resourceName: string; text: string; match: string }>
+}): Change {
+  const c = change()
+  const ops: Op[] = []
+  const done = new Set<string>()
+  for (const raw of input.terms) {
+    const text = raw.trim().replace(/\s+/g, ' ')
+    if (!text) continue
+    const hits = input.existing.filter(e => e.text.toLowerCase() === text.toLowerCase() && (!input.match || e.match === input.match))
+    if (!hits.length) {
+      throw new CliError(`"${text}"${input.match ? ` [${input.match}]` : ''} is not a negative keyword of campaign "${input.campaignName}".`)
+    }
+    for (const h of hits) {
+      if (done.has(h.resourceName)) continue
+      done.add(h.resourceName)
+      ops.push({ remove: h.resourceName })
+      c.summary.push(`remove negative "${h.text}" [${h.match}] from campaign "${input.campaignName}"`)
+    }
+  }
+  push(c, 'campaignCriteria:mutate', ops)
+  return c
+}
+
 /** A new shared negative keyword list with its keywords, optionally attached to campaigns: one atomic call. */
 export function buildCreateNegativeList(input: {
   customerId: string

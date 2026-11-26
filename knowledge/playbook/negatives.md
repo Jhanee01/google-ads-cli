@@ -89,6 +89,7 @@ For each word: the plural or common suffixed forms, and the unaccented twin.
 |---|---|
 | A term already present, or covered by a broader negative (also from an attached list) | `add-negative` skips it with a warning |
 | The unaccented twin is missing | `suggest` → `negative-missing-accent-variant` (with the plan command); `--with-accent-variants` adds it |
+| A negative blocks a service the business does offer | check `search-terms`, then `remove-negative --campaign … --terms …` (`suggest` → `negative-blocks-keyword` gives the command when it blocks a keyword) |
 | A negative blocks an enabled keyword of its own campaign (campaign, ad group or attached list) | `suggest` → `negative-blocks-keyword` |
 | A comma or another refused character, more than 10 words, more than 80 characters | every negative command, before the API |
 | Searches a piece of text appears in, and whether a negative already covers it | `ngrams` |

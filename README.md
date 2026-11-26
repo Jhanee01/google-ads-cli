@@ -76,6 +76,7 @@ Three layers, each doing what it is good at:
 | Plan (validated, written to a file, nothing changes) | |
 |---|---|
 | `add-negative --campaign \| --list --terms a,b --match EXACT [--with-accent-variants]` | negative keywords for a campaign or a shared list; existing and already covered ones are skipped; `--with-accent-variants` adds the unaccented twin of every accented term |
+| `remove-negative --campaign --terms a,b [--match BROAD]` | remove campaign negatives, e.g. one that blocks a service the business does offer; without `--match` every match type of the text goes; a term that is not a negative of the campaign is refused |
 | `create-negative-list --name --terms --match BROAD [--attach 1,2]` | a new shared negative keyword list, attached in the same atomic call |
 | `attach-negative-list --list --campaign 1,2 [--detach]` | attach or detach a shared list |
 | `add-keyword --ad-group --terms a,b --match EXACT` | keywords (e.g. promoted search terms); existing ones are skipped |
@@ -87,7 +88,7 @@ Three layers, each doing what it is good at:
 | `set-age --ad-group --exclude 18-24,65+ / --include / --bid-adjust 35-44:+20` | age targeting |
 | `set-location --campaign --add / --exclude / --remove <geo IDs> [--presence-only]` | location targeting |
 | `set-campaign-status --campaign 123,456 --enable \| --pause \| --remove [--force]` | start, pause or permanently remove whole campaigns (a running one is removed only with `--force`) |
-| `set-campaign-assets --campaign 123 [--link ids] [--unlink ids] [--sitelink "Text=https://…"]` | link or unlink existing assets (sitelinks, callouts, call, images…) and create new sitelinks, in one atomic call |
+| `set-campaign-assets --campaign 123 [--link ids] [--unlink ids] [--sitelink "Text=https://…"] [--spec assets.json]` | link or unlink existing assets (sitelinks, callouts, call, images…) and create new ones, in one atomic call. `--spec` creates sitelinks with both description lines, callouts and structured snippets (`{ "sitelinks": [{ "text", "url", "description1", "description2" }], "callouts": [], "snippets": [{ "header": "Service catalog", "values": [] }] }`), checked like `create-campaign` assets; `--unlink` the old ones in the same call |
 | `create-campaign --spec new-campaigns.json` | new Search campaigns from a JSON spec, created **PAUSED** (see below); run `check-spec` first |
 | `add-ad --ad-group 456 --spec ads.json [--pause adIds] [--paused]` | new responsive search ads (one or an array) in an existing ad group; RSA text cannot be edited, so `--pause` pauses the old ads in the same atomic call; limit errors refuse it, playbook warnings go into the plan |
 
